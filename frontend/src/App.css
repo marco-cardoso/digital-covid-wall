@@ -1,0 +1,342 @@
+.app {
+  max-width: 1280px;
+  margin: 0 auto;
+  padding: 48px 24px 32px;
+}
+
+/* --- Hero --- */
+
+.hero {
+  text-align: center;
+  margin-bottom: 40px;
+}
+
+.hero h1 {
+  font-size: clamp(32px, 5vw, 48px);
+  letter-spacing: 0.5px;
+}
+
+.hero-subtitle {
+  max-width: 560px;
+  margin: 12px auto 0;
+  color: var(--text-soft);
+}
+
+/* --- Nav --- */
+
+.nav {
+  display: flex;
+  justify-content: center;
+  gap: 8px;
+  margin-bottom: 36px;
+}
+
+.nav-link {
+  padding: 8px 18px;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  background: var(--bg-card);
+  color: var(--text-soft);
+  transition: color 0.15s ease, border-color 0.15s ease, background 0.15s ease;
+}
+
+.nav-link:hover {
+  border-color: var(--amber);
+  color: var(--text-heading);
+}
+
+.nav-link-active {
+  background: var(--amber-soft);
+  border-color: var(--amber);
+  color: var(--text-heading);
+}
+
+/* --- Section headers --- */
+
+.section-hint {
+  max-width: 560px;
+  margin: 8px auto 24px;
+  color: var(--text-soft);
+  font-size: 14px;
+  text-align: center;
+}
+
+.names,
+.dashboard {
+  text-align: center;
+}
+
+.names h2,
+.dashboard h2 {
+  font-size: 26px;
+  text-align: center;
+}
+
+/* --- Names list --- */
+
+.name-list {
+  list-style: none;
+  margin: 0 auto;
+  padding: 0;
+  max-width: 640px;
+  display: grid;
+  gap: 14px;
+}
+
+.name-card {
+  text-align: left;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--bg-card);
+  padding: 18px 20px;
+}
+
+.name-card-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.name-card-name {
+  font-family: Georgia, 'Times New Roman', serif;
+  font-size: 19px;
+  color: var(--text-heading);
+}
+
+.name-card-years {
+  color: var(--text-soft);
+  font-size: 13px;
+  white-space: nowrap;
+}
+
+.name-card-message {
+  margin: 10px 0 0;
+}
+
+.name-card-by {
+  margin: 12px 0 0;
+  color: var(--text-soft);
+  font-size: 13px;
+}
+
+/* --- Victims (every name) --- */
+
+.victims {
+  text-align: center;
+}
+
+.victims h2 {
+  font-size: 26px;
+  text-align: center;
+}
+
+.victim-search {
+  display: block;
+  width: 100%;
+  max-width: 360px;
+  margin: 0 auto 24px;
+  padding: 10px 14px;
+  font-size: 15px;
+  color: var(--text-heading);
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+}
+
+.victim-list {
+  list-style: none;
+  margin: 0 auto;
+  padding: 0;
+  max-width: 900px;
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 10px;
+}
+
+.victim-chip {
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--bg-card);
+  padding: 7px 16px;
+  font-family: Georgia, 'Times New Roman', serif;
+  font-size: 15px;
+  color: var(--text-heading);
+}
+
+/* --- Dashboard --- */
+
+.stat-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+  gap: 16px;
+  max-width: 640px;
+  margin: 0 auto;
+}
+
+.stat-card {
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--bg-card);
+  padding: 24px 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.stat-value {
+  font-family: Georgia, 'Times New Roman', serif;
+  font-size: 40px;
+  color: var(--amber);
+  line-height: 1;
+}
+
+.stat-label {
+  color: var(--text-soft);
+  font-size: 13px;
+}
+
+.dashboard-highlight {
+  margin: 24px auto 0;
+  max-width: 640px;
+  color: var(--text-soft);
+}
+
+.dashboard-highlight strong {
+  color: var(--text-heading);
+}
+
+/* --- Panorama --- */
+
+.panorama {
+  text-align: center;
+}
+
+.panorama h2 {
+  font-size: 26px;
+}
+
+.panorama-hint {
+  max-width: 560px;
+  margin: 8px auto 20px;
+  color: var(--text-soft);
+  font-size: 14px;
+}
+
+.panorama-viewport {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.wall-strip {
+  --zoom: 1;
+  --slice-h: calc(var(--zoom) * min(600px, 70vh));
+  display: flex;
+  overflow-x: auto;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  cursor: grab;
+  user-select: none;
+  touch-action: pan-x;
+  scrollbar-width: thin;
+  scrollbar-color: var(--border) transparent;
+}
+
+.wall-strip:active {
+  cursor: grabbing;
+}
+
+/* Each slice shows a source rectangle of its photo (set inline in web-copy
+   pixels, scaled against --slice-h): the width excludes the part the next
+   photo repeats, and overflow clips the rest. */
+.wall-slice {
+  height: var(--slice-h);
+  flex-shrink: 0;
+  overflow: hidden;
+  position: relative;
+}
+
+.wall-slice img {
+  position: absolute;
+  pointer-events: none;
+  max-width: none;
+}
+
+.panorama-arrow {
+  flex-shrink: 0;
+  width: 40px;
+  height: 40px;
+  border-radius: 50%;
+  border: 1px solid var(--border);
+  background: var(--bg-card);
+  color: var(--text-heading);
+  font-size: 22px;
+  line-height: 1;
+  transition: border-color 0.15s ease;
+}
+
+.panorama-arrow:hover:not(:disabled) {
+  border-color: var(--amber);
+}
+
+.panorama-arrow:disabled,
+.panorama-reset:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+.panorama-zoom {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  margin: 0 auto 16px;
+}
+
+.panorama-zoom .panorama-arrow {
+  width: 34px;
+  height: 34px;
+  font-size: 20px;
+}
+
+.panorama-zoom-level {
+  min-width: 48px;
+  text-align: center;
+  color: var(--text-soft);
+  font-variant-numeric: tabular-nums;
+}
+
+.panorama-reset {
+  padding: 6px 12px;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  background: var(--bg-card);
+  color: var(--text-heading);
+  font-size: 13px;
+  transition: border-color 0.15s ease;
+}
+
+.panorama-reset:hover:not(:disabled) {
+  border-color: var(--amber);
+}
+
+/* --- Status & footer --- */
+
+.status {
+  text-align: center;
+  color: var(--text-soft);
+  margin: 0 0 24px;
+}
+
+.status-error {
+  color: var(--error);
+}
+
+.footer {
+  margin-top: 48px;
+  text-align: center;
+  color: var(--text-soft);
+  font-size: 13px;
+}

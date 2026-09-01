@@ -1,0 +1,50 @@
+:root {
+  /* Red, white & blue memorial palette */
+  --bg: #ffffff;
+  --bg-card: #f4f6fb;
+  --bg-input: #ffffff;
+  --border: #c9d3e6;
+  --text: #1f2a44;
+  --text-soft: #5b6b8c;
+  --text-heading: #0a1f44;
+  --blue: #0a3161;
+  --red: #b31942;
+  --amber: #b31942;
+  --amber-soft: rgba(179, 25, 66, 0.1);
+  --error: #b31942;
+
+  font-family: 'Segoe UI', system-ui, sans-serif;
+  line-height: 1.55;
+  color: var(--text);
+  background: var(--bg);
+  color-scheme: light;
+  text-rendering: optimizeLegibility;
+  -webkit-font-smoothing: antialiased;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  min-height: 100svh;
+}
+
+h1,
+h2 {
+  font-family: Georgia, 'Times New Roman', serif;
+  font-weight: 500;
+  color: var(--text-heading);
+  margin: 0;
+}
+
+button {
+  font: inherit;
+  cursor: pointer;
+}
+
+input,
+textarea {
+  font: inherit;
+}

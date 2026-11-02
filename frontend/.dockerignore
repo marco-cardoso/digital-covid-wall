@@ -1,0 +1,12 @@
+node_modules
+dist
+coverage
+*.local
+
+# Only the resized photos in pictures/web are served; the full-size
+# originals (~4 GB) stay out of the build context.
+public/pictures/*
+!public/pictures/web
+
+# Stitched wall tiles are mounted at runtime (see docker-compose.yml).
+public/wall

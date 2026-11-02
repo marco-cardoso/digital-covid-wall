@@ -1,10 +1,13 @@
 """SQLite persistence for tributes. Uses the stdlib driver to keep deps minimal."""
 
+import os
 import sqlite3
 from contextlib import contextmanager
 from pathlib import Path
 
-DB_PATH = Path(__file__).resolve().parent.parent / "memorial.db"
+DB_PATH = Path(
+    os.environ.get("MEMORIAL_DB_PATH", Path(__file__).resolve().parent.parent / "memorial.db")
+)
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS tributes (

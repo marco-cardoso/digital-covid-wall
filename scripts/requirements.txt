@@ -1,0 +1,5 @@
+# Wall stitching pipeline (scripts/build_wall.py)
+numpy>=2.0
+scipy>=1.13
+opencv-python-headless>=4.10
+pyvips[binary]>=3.0

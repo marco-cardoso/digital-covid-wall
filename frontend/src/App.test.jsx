@@ -1,16 +1,20 @@
 import { render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
-import { fetchStats, fetchTributes, fetchWallPhotos } from './api'
+import { fetchStats, fetchTributes, fetchWallInfo } from './api'
 import App from './App'
 
 vi.mock('./api')
+vi.mock('openseadragon', () => ({
+  default: vi.fn(() => ({
+    addHandler: vi.fn(),
+    destroy: vi.fn(),
+  })),
+}))
 
 describe('App', () => {
   beforeEach(() => {
-    fetchWallPhotos.mockResolvedValue([
-      { file: '01-left.jpg', width: 900, height: 1200, cropRight: 0 },
-    ])
+    fetchWallInfo.mockResolvedValue({ dzi: '/wall/wall.dzi', width: 200000, height: 2000 })
     fetchTributes.mockResolvedValue([
       {
         id: 1,
@@ -34,9 +38,7 @@ describe('App', () => {
     expect(
       screen.getByRole('heading', { name: 'Walk the wall' }),
     ).toBeInTheDocument()
-    expect(
-      await screen.findByAltText('Section 1 of the memorial wall'),
-    ).toBeInTheDocument()
+    expect(await screen.findByTestId('wall-viewer')).toBeInTheDocument()
   })
 
   it('navigates to the names list', async () => {

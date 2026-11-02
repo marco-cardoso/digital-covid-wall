@@ -46,3 +46,7 @@ lerna-debug.log*
 *.njsproj
 *.sln
 *.sw?
+
+# Wall stitching (scripts/build_wall.py): cache and generated tiles
+build/
+frontend/public/wall/

@@ -8,13 +8,15 @@ async function request(path, options) {
     } catch {
       // keep generic message
     }
-    throw new Error(detail)
+    const error = new Error(detail)
+    error.status = res.status
+    throw error
   }
   return res.json()
 }
 
-export function fetchWallPhotos() {
-  return request('/pictures/web/manifest.json')
+export function fetchWallInfo() {
+  return request('/wall/wall.json')
 }
 
 export function fetchTributes() {

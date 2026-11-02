@@ -1,25 +1,38 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { fetchWallPhotos } from '../api'
+import OpenSeadragon from 'openseadragon'
+import { fetchWallInfo } from '../api'
 
-const ZOOM_MIN = 1
-const ZOOM_MAX = 4
-const ZOOM_STEP = 0.5
+const ZOOM_STEP = 1.5
+// The wall fills this share of the viewer's height, leaving equal bars above and below.
+const FILL = 0.82
+// How far past the fitted view visitors may zoom out / in.
+const MIN_ZOOM_FACTOR = 0.25
+const MAX_ZOOM_PIXEL_RATIO = 2
+const SLIDER_STEPS = 1000
+
+const clamp01 = (v) => Math.min(1, Math.max(0, v))
 
 function WallPanorama() {
-  const [photos, setPhotos] = useState([])
+  const [info, setInfo] = useState(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
-  const [zoom, setZoom] = useState(1)
-  const stripRef = useRef(null)
-  const dragRef = useRef(null)
-  const zoomRef = useRef(1)
+  const [position, setPosition] = useState(0)
+  const [view, setView] = useState({ left: 0, width: 0 })
+  const [segment, setSegment] = useState('')
+  const containerRef = useRef(null)
+  const viewerRef = useRef(null)
+  const fitHeightRef = useRef(null)
 
   useEffect(() => {
     const load = async () => {
       try {
-        setPhotos(await fetchWallPhotos())
+        setInfo(await fetchWallInfo())
       } catch (err) {
-        setError(err.message || 'Could not load the wall photos.')
+        setError(
+          err.status === 404
+            ? 'The stitched wall has not been built yet.'
+            : err.message || 'Could not load the wall.',
+        )
       } finally {
         setLoading(false)
       }
@@ -27,168 +40,192 @@ function WallPanorama() {
     load()
   }, [])
 
-  // Zoom by scaling the strip's --slice-h, keeping the point under the anchor
-  // (cursor, or the viewport centre for the buttons) fixed as the strip widens.
-  const applyZoom = useCallback((next, anchorX) => {
-    const clamped = Math.min(ZOOM_MAX, Math.max(ZOOM_MIN, next))
-    const strip = stripRef.current
-    const previous = zoomRef.current
-    if (strip && clamped !== previous) {
-      const rect = strip.getBoundingClientRect()
-      const ax = anchorX == null ? rect.width / 2 : anchorX - rect.left
-      const ratio = clamped / previous
-      strip.scrollLeft = (strip.scrollLeft + ax) * ratio - ax
+  useEffect(() => {
+    if (!info) return undefined
+    const aspect = info.height / info.width
+    const viewer = OpenSeadragon({
+      element: containerRef.current,
+      tileSources: info.dzi,
+      showNavigationControl: false,
+      visibilityRatio: 1,
+      constrainDuringPan: true,
+      maxZoomPixelRatio: MAX_ZOOM_PIXEL_RATIO,
+      // The wheel scrolls the page past the wall; Ctrl/Cmd + wheel (or two fingers) zooms it.
+      cooperativeGestures: true,
+      gestureSettingsMouse: { clickToZoom: false },
+    })
+    viewerRef.current = viewer
+    const { viewport } = viewer
+
+    // Fit the wall to FILL of the viewer's height, centred, at a given spot along it.
+    fitHeightRef.current = (centreX) => {
+      const { x: w, y: h } = viewport.getContainerSize()
+      const viewHeight = aspect / FILL
+      const viewWidth = viewHeight * (w / h)
+      const x = centreX === undefined ? 0 : centreX - viewWidth / 2
+      viewport.fitBounds(new OpenSeadragon.Rect(x, aspect / 2 - viewHeight / 2, viewWidth, viewHeight), true)
+      viewport.minZoomLevel = viewport.getZoom() * MIN_ZOOM_FACTOR
     }
-    zoomRef.current = clamped
-    setZoom(clamped)
+
+    viewer.addHandler('open', () => {
+      fitHeightRef.current()
+      // Joins sit in the bars, outside the wall: a notch above and below, and a label
+      // where a stretch between visits wasn't photographed.
+      const mark = (className, x, y, placement, text) => {
+        const element = document.createElement('div')
+        element.className = className
+        if (text) element.textContent = text
+        viewer.addOverlay({ element, location: new OpenSeadragon.Point(x, y), placement })
+      }
+      for (const brk of info.breaks ?? []) {
+        const x = brk.x / info.width
+        mark('wall-notch wall-notch-top', x, -aspect * 0.015, OpenSeadragon.Placement.BOTTOM)
+        mark('wall-notch wall-notch-bottom', x, aspect * 1.015, OpenSeadragon.Placement.TOP)
+        if (brk.kind === 'gap') {
+          mark('wall-gap-label', x, -aspect * 0.045, OpenSeadragon.Placement.BOTTOM, brk.label ?? 'Not photographed')
+        }
+      }
+    })
+
+    viewer.addHandler('viewport-change', () => {
+      const bounds = viewport.getBounds()
+      const centre = viewport.getCenter()
+      // While the whole height fits, keep the wall centred between the bars.
+      const fits = bounds.height >= aspect
+      viewer.panVertical = !fits
+      if (fits && Math.abs(centre.y - aspect / 2) > aspect * 1e-3) {
+        viewport.panTo(new OpenSeadragon.Point(centre.x, aspect / 2), true)
+      }
+      const x = clamp01(centre.x)
+      setPosition(Math.round(x * SLIDER_STEPS))
+      const left = clamp01(bounds.x)
+      setView({ left, width: clamp01(bounds.x + bounds.width) - left })
+      const px = x * info.width
+      const current = (info.segments ?? []).find((seg) => px >= seg.x && px < seg.x + seg.width)
+      setSegment(current?.label ?? '')
+    })
+
+    return () => {
+      viewer.destroy()
+      viewerRef.current = null
+    }
+  }, [info])
+
+  const zoomBy = useCallback((factor) => {
+    const { viewport } = viewerRef.current
+    viewport.zoomBy(factor)
+    viewport.applyConstraints()
   }, [])
 
-  // Ctrl/Cmd + wheel zooms. Registered natively so preventDefault isn't passive.
-  useEffect(() => {
-    const strip = stripRef.current
-    if (!strip) return undefined
-    const onWheel = (event) => {
-      if (!event.ctrlKey && !event.metaKey) return
-      event.preventDefault()
-      const factor = event.deltaY < 0 ? 1 + ZOOM_STEP : 1 / (1 + ZOOM_STEP)
-      applyZoom(zoomRef.current * factor, event.clientX)
-    }
-    strip.addEventListener('wheel', onWheel, { passive: false })
-    return () => strip.removeEventListener('wheel', onWheel)
-  }, [applyZoom, photos.length])
-
-  const scrollByViewport = (direction) => {
-    const strip = stripRef.current
-    strip.scrollBy({ left: direction * strip.clientWidth * 0.8, behavior: 'smooth' })
+  const resetZoom = () => {
+    fitHeightRef.current(viewerRef.current.viewport.getCenter().x)
   }
 
-  const startDrag = (event) => {
-    dragRef.current = {
-      startX: event.clientX,
-      startScroll: stripRef.current.scrollLeft,
-    }
+  const walk = (direction) => {
+    const { viewport } = viewerRef.current
+    const bounds = viewport.getBounds()
+    viewport.panBy(new OpenSeadragon.Point(direction * bounds.width * 0.8, 0))
+    viewport.applyConstraints()
   }
 
-  const moveDrag = (event) => {
-    const drag = dragRef.current
-    if (!drag) return
-    stripRef.current.scrollLeft = drag.startScroll - (event.clientX - drag.startX)
-  }
-
-  const endDrag = () => {
-    dragRef.current = null
+  const jumpTo = (event) => {
+    const { viewport } = viewerRef.current
+    const centre = viewport.getCenter()
+    const x = Number(event.target.value) / SLIDER_STEPS
+    viewport.panTo(new OpenSeadragon.Point(x, centre.y), true)
+    viewport.applyConstraints(true)
   }
 
   return (
-    <section className="panorama" aria-label="Photos of the memorial wall">
-      <h2>Walk the wall</h2>
-      <p className="panorama-hint">
-        Photos of the National Covid Memorial Wall in London. Drag the wall or
-        use the arrows to move along it; zoom in for a closer look.
-      </p>
-
-      {photos.length > 0 && (
-        <div className="panorama-zoom" role="group" aria-label="Zoom the wall">
-          <button
-            type="button"
-            className="panorama-arrow"
-            aria-label="Zoom out"
-            onClick={() => applyZoom(zoomRef.current - ZOOM_STEP)}
-            disabled={zoom <= ZOOM_MIN}
-          >
-            −
-          </button>
-          <span className="panorama-zoom-level" aria-live="polite">
-            {Math.round(zoom * 100)}%
-          </span>
-          <button
-            type="button"
-            className="panorama-arrow"
-            aria-label="Zoom in"
-            onClick={() => applyZoom(zoomRef.current + ZOOM_STEP)}
-            disabled={zoom >= ZOOM_MAX}
-          >
-            +
-          </button>
-          <button
-            type="button"
-            className="panorama-reset"
-            onClick={() => applyZoom(1)}
-            disabled={zoom === 1}
-          >
-            Reset
-          </button>
-        </div>
-      )}
+    <section className="wall" aria-label="Photos of the memorial wall">
+      <header className="section-intro">
+        <p className="overline">Albert Embankment, London</p>
+        <h2>Walk the wall</h2>
+        <p className="lede">
+          The National Covid Memorial Wall, stitched together from hundreds of
+          photos. Walk along it, then zoom in (+, or Ctrl/⌘ and scroll) to read
+          the messages written on the hearts.
+        </p>
+      </header>
 
       {loading && <p className="status">Loading the wall…</p>}
       {error && <p className="status status-error">{error}</p>}
-      {!loading && !error && photos.length === 0 && (
-        <p className="status">
-          No photos yet. Add JPGs to <code>frontend/public/pictures</code> and
-          run <code>scripts/build_wall.py</code> — they are displayed side by
-          side in filename order, with overlapping areas cropped away.
-        </p>
-      )}
 
-      {photos.length > 0 && (
-        <div className="panorama-viewport">
-          <button
-            type="button"
-            className="panorama-arrow"
-            aria-label="Scroll the wall left"
-            onClick={() => scrollByViewport(-1)}
-          >
-            ‹
-          </button>
-          <div
-            ref={stripRef}
-            className="wall-strip"
-            style={{ '--zoom': zoom }}
-            onPointerDown={startDrag}
-            onPointerMove={moveDrag}
-            onPointerUp={endDrag}
-            onPointerLeave={endDrag}
-          >
-            {photos.map((photo, index) => {
-              const { width, height } = photo
-              // Source rectangle shown for this photo, in web-copy pixels.
-              // Falls back to the legacy cropRight-only geometry.
-              const srcX = photo.srcX ?? 0
-              const srcY = photo.srcY ?? 0
-              const srcW = photo.srcW ?? width - (photo.cropRight ?? 0)
-              const srcH = photo.srcH ?? height
-              return (
+      {info && (
+        <>
+          <div className="stage">
+            <div className="stage-bar stage-bar-top">
+              <p className="stage-place" aria-live="polite">
+                {segment}
+              </p>
+              <div className="stage-tools" role="group" aria-label="Zoom the wall">
+                <button type="button" className="stage-button" aria-label="Zoom out" onClick={() => zoomBy(1 / ZOOM_STEP)}>
+                  −
+                </button>
+                <button type="button" className="stage-button" aria-label="Zoom in" onClick={() => zoomBy(ZOOM_STEP)}>
+                  +
+                </button>
+                <button type="button" className="stage-button stage-button-text" onClick={resetZoom}>
+                  Fit height
+                </button>
+              </div>
+            </div>
+
+            <div className="stage-canvas">
+              <div ref={containerRef} className="wall-viewer" data-testid="wall-viewer" />
+              <button
+                type="button"
+                className="stage-arrow stage-arrow-left"
+                aria-label="Walk left along the wall"
+                onClick={() => walk(-1)}
+              >
+                ‹
+              </button>
+              <button
+                type="button"
+                className="stage-arrow stage-arrow-right"
+                aria-label="Walk right along the wall"
+                onClick={() => walk(1)}
+              >
+                ›
+              </button>
+            </div>
+
+            <div className="stage-bar stage-bar-bottom">
+              <div
+                className="wall-map"
+                style={info.overview ? { backgroundImage: `url("${info.overview}")` } : undefined}
+              >
                 <div
-                  key={photo.file}
-                  className="wall-slice"
-                  style={{ width: `calc(var(--slice-h) * ${srcW / srcH})` }}
-                >
-                  <img
-                    src={`/pictures/web/${photo.file}`}
-                    alt={`Section ${index + 1} of the memorial wall`}
-                    loading="lazy"
-                    draggable={false}
-                    style={{
-                      width: `calc(var(--slice-h) * ${width / srcH})`,
-                      height: `calc(var(--slice-h) * ${height / srcH})`,
-                      left: `calc(var(--slice-h) * ${-srcX / srcH})`,
-                      top: `calc(var(--slice-h) * ${-srcY / srcH})`,
-                    }}
-                  />
-                </div>
-              )
-            })}
+                  className="wall-map-window"
+                  data-testid="wall-map-window"
+                  style={{ left: `${view.left * 100}%`, width: `${view.width * 100}%` }}
+                />
+                <input
+                  type="range"
+                  className="wall-map-slider"
+                  aria-label="Position along the wall"
+                  min="0"
+                  max={SLIDER_STEPS}
+                  value={position}
+                  onChange={jumpTo}
+                />
+              </div>
+            </div>
           </div>
-          <button
-            type="button"
-            className="panorama-arrow"
-            aria-label="Scroll the wall right"
-            onClick={() => scrollByViewport(1)}
-          >
-            ›
-          </button>
-        </div>
+
+          <ul className="stage-legend">
+            <li>
+              <span className="legend-notch" aria-hidden="true" />
+              Neighbouring photos joined without an overlap
+            </li>
+            <li>
+              <span className="legend-notch" aria-hidden="true" />
+              <span className="legend-label" aria-hidden="true">Not photographed</span>
+              A stretch between visits nobody photographed
+            </li>
+          </ul>
+        </>
       )}
     </section>
   )

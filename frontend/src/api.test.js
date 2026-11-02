@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { fetchStats, fetchTributes, fetchWallPhotos } from './api'
+import { fetchStats, fetchTributes, fetchWallInfo } from './api'
 
 const jsonResponse = (data, status = 200) => ({
   ok: status < 400,
@@ -18,13 +18,13 @@ describe('api client', () => {
     vi.unstubAllGlobals()
   })
 
-  it('fetchWallPhotos returns the parsed wall manifest', async () => {
-    const photos = [{ file: '01.jpg', width: 900, height: 1200, cropRight: 120 }]
-    const fetchMock = vi.fn().mockResolvedValue(jsonResponse(photos))
+  it('fetchWallInfo returns the stitched wall description', async () => {
+    const info = { dzi: '/wall/wall.dzi', width: 200000, height: 3000, gaps: [] }
+    const fetchMock = vi.fn().mockResolvedValue(jsonResponse(info))
     vi.stubGlobal('fetch', fetchMock)
 
-    await expect(fetchWallPhotos()).resolves.toEqual(photos)
-    expect(fetchMock).toHaveBeenCalledWith('/pictures/web/manifest.json', undefined)
+    await expect(fetchWallInfo()).resolves.toEqual(info)
+    expect(fetchMock).toHaveBeenCalledWith('/wall/wall.json', undefined)
   })
 
   it('fetchTributes requests the tributes endpoint', async () => {
@@ -51,13 +51,16 @@ describe('api client', () => {
       vi.fn().mockResolvedValue(jsonResponse({ detail: 'Wall unavailable' }, 503)),
     )
 
-    await expect(fetchWallPhotos()).rejects.toThrow('Wall unavailable')
+    await expect(fetchWallInfo()).rejects.toThrow('Wall unavailable')
   })
 
   it('falls back to a generic message when the error body is not JSON', async () => {
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue(invalidJsonResponse(404)))
 
-    await expect(fetchWallPhotos()).rejects.toThrow('Request failed (404)')
+    await expect(fetchWallInfo()).rejects.toMatchObject({
+      message: 'Request failed (404)',
+      status: 404,
+    })
   })
 
   it('falls back to a generic message when detail is not a string', async () => {
@@ -66,6 +69,6 @@ describe('api client', () => {
       vi.fn().mockResolvedValue(jsonResponse({ detail: [{ msg: 'bad' }] }, 422)),
     )
 
-    await expect(fetchWallPhotos()).rejects.toThrow('Request failed (422)')
+    await expect(fetchWallInfo()).rejects.toThrow('Request failed (422)')
   })
 })

@@ -12,6 +12,9 @@
     "coverage": "vitest run --coverage"
   },
   "dependencies": {
+    "@fontsource-variable/fraunces": "^5.3.0",
+    "@fontsource-variable/inter": "^5.3.0",
+    "openseadragon": "^6.1.1",
     "react": "^19.2.7",
     "react-dom": "^19.2.7"
   },

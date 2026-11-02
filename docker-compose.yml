@@ -1,0 +1,20 @@
+services:
+  backend:
+    build: ./backend
+    restart: unless-stopped
+    volumes:
+      - memorial-data:/data
+
+  frontend:
+    build: ./frontend
+    restart: unless-stopped
+    depends_on:
+      - backend
+    ports:
+      - "${PORT:-8080}:80"
+    volumes:
+      # Stitched wall tiles from scripts/build_wall.py; rebuilt without touching the image.
+      - ./frontend/public/wall:/usr/share/nginx/html/wall:ro
+
+volumes:
+  memorial-data:

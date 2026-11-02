@@ -1,193 +1,269 @@
-import { fireEvent, render, screen } from '@testing-library/react'
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
-import { fetchWallPhotos } from '../api'
+import { fetchWallInfo } from '../api'
 import WallPanorama from './WallPanorama'
 
+// OpenSeadragon draws to a canvas, which jsdom lacks; stand in a recording fake.
+const osd = vi.hoisted(() => {
+  const state = { handlers: {}, viewer: null, options: null }
+  const makeViewer = () => {
+    const viewport = {
+      minZoomLevel: 0,
+      getContainerSize: vi.fn(() => ({ x: 800, y: 400 })),
+      fitBounds: vi.fn(),
+      getZoom: vi.fn(() => 40),
+      zoomBy: vi.fn(),
+      zoomTo: vi.fn(),
+      applyConstraints: vi.fn(),
+      getBounds: vi.fn(() => ({ x: 0.2, y: -0.001, width: 0.05, height: 0.0122 })),
+      panBy: vi.fn(),
+      panTo: vi.fn(),
+      getCenter: vi.fn(() => ({ x: 0.25, y: 0.01 })),
+    }
+    return {
+      viewport,
+      addHandler: vi.fn((name, fn) => {
+        state.handlers[name] = fn
+      }),
+      addOverlay: vi.fn(),
+      destroy: vi.fn(),
+    }
+  }
+  const OpenSeadragon = vi.fn((options) => {
+    state.options = options
+    state.viewer = makeViewer()
+    return state.viewer
+  })
+  OpenSeadragon.Rect = class {
+    constructor(x, y, width, height) {
+      Object.assign(this, { x, y, width, height })
+    }
+  }
+  OpenSeadragon.Point = class {
+    constructor(x, y) {
+      Object.assign(this, { x, y })
+    }
+  }
+  OpenSeadragon.Placement = { CENTER: 'center', TOP: 'top', BOTTOM: 'bottom' }
+  return { state, OpenSeadragon }
+})
+
+vi.mock('openseadragon', () => ({ default: osd.OpenSeadragon }))
 vi.mock('../api')
 
-const photos = [
-  { file: '01-left.jpg', width: 900, height: 1200, cropRight: 100 },
-  { file: '02-right.jpg', width: 900, height: 1200, cropRight: 0 },
-]
+const info = {
+  dzi: '/wall/wall.dzi',
+  width: 200000,
+  height: 2000,
+  overview: '/wall/wall-overview.jpg',
+  breaks: [
+    { x: 30000, kind: 'seam' },
+    { x: 50000, kind: 'gap', label: 'Not photographed' },
+    { x: 120000, kind: 'gap' },
+  ],
+  segments: [
+    { x: 0, width: 49000, label: 'Photographed 30 Jul – 1 Aug 2023' },
+    { x: 51000, width: 149000, label: 'Photographed 20 – 21 Aug 2023' },
+  ],
+}
 
-const renderWithPhotos = async () => {
+const renderWall = async () => {
   const view = render(<WallPanorama />)
-  await screen.findByAltText('Section 1 of the memorial wall')
+  await waitFor(() => expect(osd.state.viewer).not.toBeNull())
   return view
 }
 
+const openViewer = () => act(() => osd.state.handlers.open())
+
 describe('WallPanorama', () => {
   beforeEach(() => {
-    fetchWallPhotos.mockResolvedValue(photos)
+    osd.state.handlers = {}
+    osd.state.viewer = null
+    osd.state.options = null
+    fetchWallInfo.mockResolvedValue(info)
   })
 
-  it('shows a loading message, then the photos side by side in order', async () => {
+  it('shows a loading message, then a deep-zoom viewer of the stitched wall', async () => {
     render(<WallPanorama />)
-
     expect(screen.getByText('Loading the wall…')).toBeInTheDocument()
 
-    const images = await screen.findAllByRole('img')
-    expect(images.map((img) => img.getAttribute('src'))).toEqual([
-      '/pictures/web/01-left.jpg',
-      '/pictures/web/02-right.jpg',
-    ])
+    await waitFor(() => expect(osd.state.options).not.toBeNull())
     expect(screen.queryByText('Loading the wall…')).not.toBeInTheDocument()
+    const { element, ...options } = osd.state.options
+    expect(element).toBe(screen.getByTestId('wall-viewer'))   // identity: deep-comparing DOM nodes is slow
+    expect(options).toMatchObject({
+      tileSources: '/wall/wall.dzi',
+      showNavigationControl: false,
+      cooperativeGestures: true,
+    })
   })
 
-  it('sizes each slice to hide the area repeated by the next photo', async () => {
-    const { container } = await renderWithPhotos()
+  it('opens on the first section, centred with equal bars above and below', async () => {
+    await renderWall()
+    openViewer()
 
-    const slices = [...container.querySelectorAll('.wall-slice')]
-    // 900 wide, 100px repeated by the next -> visible 800 of 1200 tall.
-    expect(slices[0].style.width).toBe('calc(var(--slice-h) * 0.6666666666666666)')
-    // Full-height image, no source offset, positioned at the origin.
-    const img0 = slices[0].querySelector('img')
-    expect(img0.style.left).toBe('calc(var(--slice-h) * 0)')
-    expect(img0.style.top).toBe('calc(var(--slice-h) * 0)')
-    expect(slices[1].style.width).toBe('calc(var(--slice-h) * 0.75)')
+    const { viewport } = osd.state.viewer
+    // aspect = 2000 / 200000 = 0.01; the wall fills 82% of a 800x400 viewer's height.
+    const [rect, immediately] = viewport.fitBounds.mock.calls.at(-1)
+    expect(immediately).toBe(true)
+    expect(rect.x).toBe(0)
+    expect(rect.height).toBeCloseTo(0.01 / 0.82)
+    expect(rect.y + rect.height / 2).toBeCloseTo(0.005)        // centred on the wall
+    expect(rect.width).toBeCloseTo((0.01 / 0.82) * 2)
+    expect(viewport.minZoomLevel).toBe(10) // a quarter of the fitted zoom
   })
 
-  it('honors an explicit source rectangle (manual editor output)', async () => {
-    fetchWallPhotos.mockResolvedValue([
-      { file: 'a.jpg', width: 900, height: 1200, cropRight: 0,
-        srcX: 150, srcY: 60, srcW: 600, srcH: 1000 },
+  it('marks every join in the bars, and labels the stretches nobody photographed', async () => {
+    await renderWall()
+    openViewer()
+
+    const overlays = osd.state.viewer.addOverlay.mock.calls.map(([o]) => o)
+    expect(overlays.map((o) => o.element.className)).toEqual([
+      'wall-notch wall-notch-top', 'wall-notch wall-notch-bottom',
+      'wall-notch wall-notch-top', 'wall-notch wall-notch-bottom', 'wall-gap-label',
+      'wall-notch wall-notch-top', 'wall-notch wall-notch-bottom', 'wall-gap-label',
     ])
-    const { container } = await renderWithPhotos()
-
-    const slice = container.querySelector('.wall-slice')
-    expect(slice.style.width).toBe('calc(var(--slice-h) * 0.6)') // 600/1000
-    const img = slice.querySelector('img')
-    expect(img.style.height).toBe('calc(var(--slice-h) * 1.2)') // 1200/1000
-    expect(img.style.left).toBe('calc(var(--slice-h) * -0.15)') // -150/1000
-    expect(img.style.top).toBe('calc(var(--slice-h) * -0.06)') // -60/1000
+    // notches sit just outside the wall (aspect 0.01): above its top, below its bottom
+    expect(overlays[0].location.x).toBeCloseTo(0.15)
+    expect(overlays[0].location.y).toBeLessThan(0)
+    expect(overlays[1].location.y).toBeGreaterThan(0.01)
+    expect(overlays.filter((o) => o.element.className === 'wall-gap-label').map((o) => o.element.textContent))
+      .toEqual(['Not photographed', 'Not photographed'])
   })
 
-  it('shows guidance when there are no photos', async () => {
-    fetchWallPhotos.mockResolvedValue([])
-    render(<WallPanorama />)
+  it('adds no markers when the wall has no breaks', async () => {
+    fetchWallInfo.mockResolvedValue({ ...info, breaks: undefined })
+    await renderWall()
+    openViewer()
 
-    expect(await screen.findByText(/No photos yet/)).toBeInTheDocument()
+    expect(osd.state.viewer.addOverlay).not.toHaveBeenCalled()
   })
 
-  it('shows the API error message when loading fails', async () => {
-    fetchWallPhotos.mockRejectedValue(new Error('Wall unavailable'))
-    render(<WallPanorama />)
-
-    expect(await screen.findByText('Wall unavailable')).toBeInTheDocument()
-  })
-
-  it('falls back to a generic error message', async () => {
-    fetchWallPhotos.mockRejectedValue(new Error(''))
-    render(<WallPanorama />)
-
-    expect(
-      await screen.findByText('Could not load the wall photos.'),
-    ).toBeInTheDocument()
-  })
-
-  it('zooms in and out, clamping and updating the strip scale', async () => {
+  it('zooms in, out and back to the fitted height', async () => {
     const user = userEvent.setup()
-    const { container } = await renderWithPhotos()
-    const strip = container.querySelector('.wall-strip')
-    const level = () => screen.getByText(/%$/).textContent
-
-    expect(level()).toBe('100%')
-    expect(strip.style.getPropertyValue('--zoom')).toBe('1')
-    // Zoom out is disabled at the minimum.
-    expect(screen.getByRole('button', { name: 'Zoom out' })).toBeDisabled()
+    await renderWall()
+    openViewer()
+    const { viewport } = osd.state.viewer
 
     await user.click(screen.getByRole('button', { name: 'Zoom in' }))
-    expect(level()).toBe('150%')
-    expect(strip.style.getPropertyValue('--zoom')).toBe('1.5')
-
+    expect(viewport.zoomBy).toHaveBeenLastCalledWith(1.5)
     await user.click(screen.getByRole('button', { name: 'Zoom out' }))
-    expect(level()).toBe('100%')
+    expect(viewport.zoomBy).toHaveBeenLastCalledWith(1 / 1.5)
+    expect(viewport.applyConstraints).toHaveBeenCalledTimes(2)
+    await user.click(screen.getByRole('button', { name: 'Fit height' }))
+    // fits the height again around the current spot along the wall
+    const [rect] = viewport.fitBounds.mock.calls.at(-1)
+    expect(rect.x + rect.width / 2).toBeCloseTo(0.25)
+    expect(rect.height).toBeCloseTo(0.01 / 0.82)
   })
 
-  it('clamps zoom at the maximum and resets to 100%', async () => {
+  it('walks along the wall by most of a screen width', async () => {
     const user = userEvent.setup()
-    await renderWithPhotos()
-    const zoomIn = screen.getByRole('button', { name: 'Zoom in' })
+    await renderWall()
+    const { viewport } = osd.state.viewer
 
-    for (let i = 0; i < 10; i++) await user.click(zoomIn)
-    expect(screen.getByText(/%$/).textContent).toBe('400%') // ZOOM_MAX
-    expect(zoomIn).toBeDisabled()
+    const lastPan = () => viewport.panBy.mock.calls.at(-1)[0]
 
-    await user.click(screen.getByRole('button', { name: 'Reset' }))
-    expect(screen.getByText(/%$/).textContent).toBe('100%')
-    expect(screen.getByRole('button', { name: 'Reset' })).toBeDisabled()
+    await user.click(screen.getByRole('button', { name: 'Walk right along the wall' }))
+    expect(lastPan().x).toBeCloseTo(0.04)
+    expect(lastPan().y).toBe(0)
+    await user.click(screen.getByRole('button', { name: 'Walk left along the wall' }))
+    expect(lastPan().x).toBeCloseTo(-0.04)
   })
 
-  it('zooms with Ctrl + wheel, anchored on the pointer', async () => {
-    const { container } = await renderWithPhotos()
-    const strip = container.querySelector('.wall-strip')
+  it('tracks and sets the position along the wall on the overview map', async () => {
+    const { container } = await renderWall()
+    const { viewport } = osd.state.viewer
+    const slider = screen.getByRole('slider', { name: 'Position along the wall' })
 
-    fireEvent.wheel(strip, { deltaY: -100, ctrlKey: true, clientX: 200, clientY: 100 })
-    expect(screen.getByText(/%$/).textContent).toBe('150%')
+    act(() => osd.state.handlers['viewport-change']())
+    expect(slider).toHaveValue('250')
+    const windowEl = screen.getByTestId('wall-map-window')
+    expect(windowEl.style.left).toBe('20%')
+    expect(parseFloat(windowEl.style.width)).toBeCloseTo(5)
+    expect(container.querySelector('.wall-map').style.backgroundImage).toBe('url("/wall/wall-overview.jpg")')
 
-    // Wheeling the other way zooms back out.
-    fireEvent.wheel(strip, { deltaY: 100, ctrlKey: true, clientX: 200, clientY: 100 })
-    expect(screen.getByText(/%$/).textContent).toBe('100%')
+    viewport.getCenter.mockReturnValue({ x: 1.3, y: 0.01 })
+    act(() => osd.state.handlers['viewport-change']())
+    expect(slider).toHaveValue('1000') // clamped to the end of the wall
 
-    // A plain wheel (no modifier) must not zoom.
-    fireEvent.wheel(strip, { deltaY: -100, clientX: 200, clientY: 100 })
-    expect(screen.getByText(/%$/).textContent).toBe('100%')
+    fireEvent.change(slider, { target: { value: '600' } })
+    expect(viewport.panTo).toHaveBeenCalledWith(expect.objectContaining({ x: 0.6, y: 0.01 }), true)
   })
 
-  it('renders full-frame when a photo omits cropRight', async () => {
-    fetchWallPhotos.mockResolvedValue([{ file: 'a.jpg', width: 900, height: 1200 }])
-    const { container } = await renderWithPhotos()
-    // No cropRight and no srcRect -> the whole width is shown (900/1200).
-    expect(container.querySelector('.wall-slice').style.width).toBe(
-      'calc(var(--slice-h) * 0.75)',
-    )
+  it('names when each stretch was photographed, and nothing over a gap', async () => {
+    await renderWall()
+    const { viewport } = osd.state.viewer
+
+    viewport.getCenter.mockReturnValue({ x: 0.1, y: 0.01 })
+    act(() => osd.state.handlers['viewport-change']())
+    expect(screen.getByText('Photographed 30 Jul – 1 Aug 2023')).toBeInTheDocument()
+
+    viewport.getCenter.mockReturnValue({ x: 0.6, y: 0.01 })
+    act(() => osd.state.handlers['viewport-change']())
+    expect(screen.getByText('Photographed 20 – 21 Aug 2023')).toBeInTheDocument()
+
+    viewport.getCenter.mockReturnValue({ x: 0.25, y: 0.01 })        // inside the gap
+    act(() => osd.state.handlers['viewport-change']())
+    expect(screen.queryByText(/^Photographed/)).not.toBeInTheDocument()
   })
 
-  it('scrolls the strip with the arrow buttons', async () => {
-    const user = userEvent.setup()
-    const { container } = await renderWithPhotos()
-    const strip = container.querySelector('.wall-strip')
-    strip.scrollBy = vi.fn()
-
-    await user.click(screen.getByRole('button', { name: 'Scroll the wall right' }))
-    expect(strip.scrollBy).toHaveBeenCalledWith(
-      expect.objectContaining({ behavior: 'smooth' }),
-    )
-
-    await user.click(screen.getByRole('button', { name: 'Scroll the wall left' }))
-    expect(strip.scrollBy).toHaveBeenCalledTimes(2)
+  it('copes with a wall description without segments or an overview', async () => {
+    fetchWallInfo.mockResolvedValue({ ...info, segments: undefined, overview: undefined })
+    const { container } = await renderWall()
+    act(() => osd.state.handlers['viewport-change']())
+    expect(screen.queryByText(/^Photographed/)).not.toBeInTheDocument()
+    expect(container.querySelector('.wall-map').style.backgroundImage).toBe('')
   })
 
-  it('pans the strip while dragging with the pointer', async () => {
-    const { container } = await renderWithPhotos()
-    const strip = container.querySelector('.wall-strip')
-    strip.scrollLeft = 100
+  it('keeps the wall centred while its whole height is in view', async () => {
+    await renderWall()
+    const viewer = osd.state.viewer
+    const { viewport } = viewer
 
-    fireEvent.pointerDown(strip, { clientX: 200 })
-    fireEvent.pointerMove(strip, { clientX: 150 })
-    expect(strip.scrollLeft).toBe(150)
+    // drifted off-centre while fully in view: pulled back, vertical panning locked
+    viewport.getCenter.mockReturnValue({ x: 0.3, y: 0.0062 })
+    act(() => osd.state.handlers['viewport-change']())
+    expect(viewport.panTo).toHaveBeenLastCalledWith(expect.objectContaining({ x: 0.3, y: 0.005 }), true)
+    expect(viewer.panVertical).toBe(false)
 
-    fireEvent.pointerMove(strip, { clientX: 260 })
-    expect(strip.scrollLeft).toBe(40)
+    // zoomed in past the wall's height: free to pan up and down
+    viewport.panTo.mockClear()
+    viewport.getBounds.mockReturnValue({ x: 0.3, y: 0.002, width: 0.008, height: 0.004 })
+    act(() => osd.state.handlers['viewport-change']())
+    expect(viewport.panTo).not.toHaveBeenCalled()
+    expect(viewer.panVertical).toBe(true)
   })
 
-  it('stops panning once the pointer is released or leaves', async () => {
-    const { container } = await renderWithPhotos()
-    const strip = container.querySelector('.wall-strip')
+  it('explains the two kinds of break', async () => {
+    await renderWall()
+    expect(screen.getByText(/joined without an overlap/)).toBeInTheDocument()
+    expect(screen.getByText(/between visits nobody photographed/)).toBeInTheDocument()
+  })
 
-    // Moving without a preceding pointer-down must not pan.
-    fireEvent.pointerMove(strip, { clientX: 50 })
-    expect(strip.scrollLeft).toBe(0)
+  it('destroys the viewer when unmounted', async () => {
+    const { unmount } = await renderWall()
+    const viewer = osd.state.viewer
+    unmount()
+    expect(viewer.destroy).toHaveBeenCalled()
+  })
 
-    fireEvent.pointerDown(strip, { clientX: 200 })
-    fireEvent.pointerUp(strip)
-    fireEvent.pointerMove(strip, { clientX: 100 })
-    expect(strip.scrollLeft).toBe(0)
+  it('explains when the stitched wall has not been built', async () => {
+    fetchWallInfo.mockRejectedValue(Object.assign(new Error('Request failed (404)'), { status: 404 }))
+    render(<WallPanorama />)
 
-    fireEvent.pointerDown(strip, { clientX: 200 })
-    fireEvent.pointerLeave(strip)
-    fireEvent.pointerMove(strip, { clientX: 100 })
-    expect(strip.scrollLeft).toBe(0)
+    expect(await screen.findByText('The stitched wall has not been built yet.')).toBeInTheDocument()
+  })
+
+  it('shows other load errors, with a generic fallback', async () => {
+    fetchWallInfo.mockRejectedValue(new Error('Wall unavailable'))
+    const { unmount } = render(<WallPanorama />)
+    expect(await screen.findByText('Wall unavailable')).toBeInTheDocument()
+    unmount()
+
+    fetchWallInfo.mockRejectedValue(new Error(''))
+    render(<WallPanorama />)
+    expect(await screen.findByText('Could not load the wall.')).toBeInTheDocument()
   })
 })

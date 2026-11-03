@@ -50,6 +50,7 @@ class Victim(BaseModel):
 
 
 class WallStats(BaseModel):
+    names: int
     tributes: int
     candles: int
 
@@ -129,4 +130,5 @@ def wall_stats():
         row = conn.execute(
             "SELECT COUNT(*) AS tributes, COALESCE(SUM(candles), 0) AS candles FROM tributes"
         ).fetchone()
-    return WallStats(tributes=row["tributes"], candles=row["candles"])
+        names = conn.execute("SELECT COUNT(*) AS n FROM victims").fetchone()["n"]
+    return WallStats(names=names, tributes=row["tributes"], candles=row["candles"])

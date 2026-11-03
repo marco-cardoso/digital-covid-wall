@@ -97,6 +97,10 @@ def test_stats_reflect_seed_data(client):
     assert stats["candles"] == sum(t["candles"] for t in tributes)
 
 
+def test_stats_count_the_names(client):
+    assert client.get("/api/stats").json()["names"] == len(client.get("/api/victims").json())
+
+
 def test_stats_update_after_create_and_candle(client):
     before = client.get("/api/stats").json()
     created = client.post("/api/tributes", json=VALID_TRIBUTE).json()

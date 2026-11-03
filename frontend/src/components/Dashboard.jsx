@@ -48,8 +48,12 @@ function Dashboard() {
         <>
           <div className="stat-grid">
             <div className="stat-card">
+              <span className="stat-value">{stats.names.toLocaleString()}</span>
+              <span className="stat-label">Names read from the wall</span>
+            </div>
+            <div className="stat-card">
               <span className="stat-value">{stats.tributes}</span>
-              <span className="stat-label">Names remembered</span>
+              <span className="stat-label">Tributes</span>
             </div>
             <div className="stat-card">
               <span className="stat-value">{stats.candles}</span>
@@ -57,7 +61,7 @@ function Dashboard() {
             </div>
             <div className="stat-card">
               <span className="stat-value">{averageCandles}</span>
-              <span className="stat-label">Candles per name</span>
+              <span className="stat-label">Candles per tribute</span>
             </div>
           </div>
 

@@ -1,5 +1,6 @@
 """SQLite persistence for tributes. Uses the stdlib driver to keep deps minimal."""
 
+import json
 import os
 import sqlite3
 from contextlib import contextmanager
@@ -8,6 +9,9 @@ from pathlib import Path
 DB_PATH = Path(
     os.environ.get("MEMORIAL_DB_PATH", Path(__file__).resolve().parent.parent / "memorial.db")
 )
+
+# Text read from the hearts by OCR; regenerate with scripts/import_victims.py.
+VICTIMS_PATH = Path(__file__).resolve().parent / "victims.json"
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS tributes (
@@ -87,4 +91,9 @@ def init_db() -> None:
                 "INSERT INTO tributes (name, years, message, author, relationship, candles)"
                 " VALUES (?, ?, ?, ?, ?, ?)",
                 SEED_TRIBUTES,
+            )
+        if conn.execute("SELECT COUNT(*) AS n FROM victims").fetchone()["n"] == 0:
+            names = json.loads(VICTIMS_PATH.read_text(encoding="utf-8"))
+            conn.executemany(
+                "INSERT INTO victims (name) VALUES (?)", [(name,) for name in names]
             )

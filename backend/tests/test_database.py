@@ -30,3 +30,21 @@ def test_db_context_manager_commits(test_db):
         ).fetchone()
     assert row is not None
     assert row["candles"] == 0
+
+
+def test_init_db_seeds_victims_once(test_db, tmp_path, monkeypatch):
+    seed = tmp_path / "victims.json"
+    seed.write_text('["Ann Lee", "Two\\nlines"]', encoding="utf-8")
+    monkeypatch.setattr(database, "VICTIMS_PATH", seed)
+    database.init_db()
+    database.init_db()
+    with database.db() as conn:
+        rows = conn.execute("SELECT name FROM victims ORDER BY id").fetchall()
+    assert [r["name"] for r in rows] == ["Ann Lee", "Two\nlines"]
+
+
+def test_bundled_victims_file_loads(test_db):
+    database.init_db()
+    with database.db() as conn:
+        count = conn.execute("SELECT COUNT(*) AS n FROM victims").fetchone()["n"]
+    assert count > 0

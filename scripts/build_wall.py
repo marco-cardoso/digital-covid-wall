@@ -203,7 +203,8 @@ def main():
         rendered.append((strip_dir, date_label(photos[a:b + 1]), kinds[k]))
 
     # 5. tiles
-    info = tiles.build(rendered, args.out, log=log)
+    numbered = [[(i + 1, photos[i]) for i in range(a, b + 1)] for (a, b), _ in models]
+    info = tiles.build(rendered, args.out, photos=numbered, log=log)
     log('done: %s (%d x %d px)' % (os.path.join(args.out, os.path.basename(info['dzi'])), info['width'], info['height']))
 
 

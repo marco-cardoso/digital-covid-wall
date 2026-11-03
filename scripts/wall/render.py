@@ -198,6 +198,15 @@ def render_strip(si):
     return si
 
 
+def photo_spans(strip_dir):
+    """Where each photo shows in a rendered run: (index within the run, x0, x1) in run pixels,
+    left to right, taken from the seams between neighbouring photos (at their median)."""
+    L = np.load(os.path.join(strip_dir, 'layout.npz'))
+    order, seams = L['order'], L['seams']
+    cuts = [0.0] + [float(np.median(s)) * LOW - int(L['X0']) for s in seams] + [float(int(L['X1']) - int(L['X0']))]
+    return [(int(f), cuts[k], cuts[k + 1]) for k, f in enumerate(order)]
+
+
 def render(model_path, photo_paths, out_dir, scale, y_top, y_bottom, workers=4, log=print):
     """Render one run to out_dir/strip_NNNN.jpg; returns (width, height) in pixels."""
     os.makedirs(out_dir, exist_ok=True)

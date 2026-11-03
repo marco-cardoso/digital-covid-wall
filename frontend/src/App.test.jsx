@@ -26,7 +26,7 @@ describe('App', () => {
         candles: 12,
       },
     ])
-    fetchStats.mockResolvedValue({ tributes: 3, candles: 57 })
+    fetchStats.mockResolvedValue({ names: 6364, tributes: 3, candles: 57 })
   })
 
   it('renders the memorial heading and the panorama by default', async () => {
@@ -60,7 +60,7 @@ describe('App', () => {
     expect(
       screen.getByRole('heading', { name: 'Dashboard' }),
     ).toBeInTheDocument()
-    expect(await screen.findByText('Names remembered')).toBeInTheDocument()
+    expect(await screen.findByText('Tributes')).toBeInTheDocument()
   })
 
   it('renders the footer dedication', () => {

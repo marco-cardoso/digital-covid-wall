@@ -209,12 +209,35 @@ describe('WallPanorama', () => {
     expect(screen.queryByText(/^Photographed/)).not.toBeInTheDocument()
   })
 
+  it('shows the photo at the centre of the view', async () => {
+    fetchWallInfo.mockResolvedValue({
+      ...info,
+      photoTotal: 518,
+      photos: [
+        { x: 0, number: 1, file: 'first.jpg' },
+        { x: 60000, number: 2, file: 'second.jpg' },
+      ],
+    })
+    await renderWall()
+    const { viewport } = osd.state.viewer
+
+    viewport.getCenter.mockReturnValue({ x: 0.1, y: 0.01 })       // 20000 px along
+    act(() => osd.state.handlers['viewport-change']())
+    expect(screen.getByText(/Photo 1 of 518/)).toBeInTheDocument()
+    expect(screen.getByText('first.jpg')).toBeInTheDocument()
+
+    viewport.getCenter.mockReturnValue({ x: 0.5, y: 0.01 })
+    act(() => osd.state.handlers['viewport-change']())
+    expect(screen.getByText(/Photo 2 of 518/)).toBeInTheDocument()
+  })
+
   it('copes with a wall description without segments or an overview', async () => {
     fetchWallInfo.mockResolvedValue({ ...info, segments: undefined, overview: undefined })
     const { container } = await renderWall()
     act(() => osd.state.handlers['viewport-change']())
     expect(screen.queryByText(/^Photographed/)).not.toBeInTheDocument()
     expect(container.querySelector('.wall-map').style.backgroundImage).toBe('')
+    expect(screen.queryByText(/^Photo \d/)).not.toBeInTheDocument()
   })
 
   it('keeps the wall centred while its whole height is in view', async () => {

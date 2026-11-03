@@ -9,6 +9,8 @@ import cv2
 import numpy as np
 import pyvips
 
+from .render import photo_spans
+
 SEAM_PX = 320                  # neighbouring runs meet along a cut chosen within this band
 LEVEL_RAMP_PX = 2400           # brightness is matched at a join and eased back over this much
 ALIGN_REACH_PX = 80            # how far a join may nudge a run up or down to line up the courses
@@ -178,23 +180,26 @@ def adjust(img, left=None, right=None, fade_left=False, fade_right=False, ramp=L
     return (img - BACKGROUND) * _profile(img, fade) + BACKGROUND
 
 
-def build(runs, out_dir, url_prefix='/wall', seam_px=SEAM_PX, ramp_px=LEVEL_RAMP_PX, feather_px=FEATHER_PX, log=print):
+def build(runs, out_dir, url_prefix='/wall', seam_px=SEAM_PX, ramp_px=LEVEL_RAMP_PX, feather_px=FEATHER_PX,
+          photos=None, log=print):
     """runs: [(strip_dir, label, break_before)] in wall order, all rendered at the same height.
 
     Neighbouring runs are joined into one continuous wall: lined up on the courses,
     matched in brightness and cut together along a path between the hearts. break_before records what kind of join it is,
     'divider' (photos from one walk that do not overlap) or 'gap' (a stretch between visits
     nobody photographed), so the viewer can mark it; it is ignored for the first run.
+    photos optionally names each run's photos, [[(number, file), ...], ...], so wall.json can
+    say which photo shows where.
     Writes out_dir/wall-<build>.dzi, out_dir/wall-<build>_files/, an overview image and
     out_dir/wall.json. Each build gets new URLs (tiles are cached for days), wall.json
     (never cached) points to the current one, and earlier builds are removed.
     """
-    imgs, labels, kinds = [], [], []
+    imgs, labels, kinds, lefts = [], [], [], []
     for strip_dir, label, kind in runs:
         left, right = covered_span(strip_dir)
         whole = run_image(strip_dir, access='random')
         imgs.append(fill_edge_holes(whole.crop(left, 0, right - left, whole.height)))
-        labels.append(label); kinds.append(kind)
+        labels.append(label); kinds.append(kind); lefts.append(left)
     height = max(img.height for img in imgs)
     n = len(imgs)
     fits = [join_fit(imgs[k], imgs[k + 1]) for k in range(n - 1)]
@@ -248,6 +253,9 @@ def build(runs, out_dir, url_prefix='/wall', seam_px=SEAM_PX, ramp_px=LEVEL_RAMP
     overview.write_to_file(os.path.join(out_dir, name + '-overview.jpg[Q=85,strip]'))
     info = dict(dzi='%s/%s.dzi' % (url_prefix, name), overview='%s/%s-overview.jpg' % (url_prefix, name),
                 width=wall.width, height=wall.height, segments=segments, breaks=breaks)
+    if photos is not None:
+        info['photos'] = place_photos(runs, photos, segments, lefts)
+        info['photoTotal'] = sum(len(p) for p in photos)
     with open(os.path.join(out_dir, 'wall.json.tmp'), 'w') as fh:
         json.dump(info, fh, indent=2)
     os.replace(os.path.join(out_dir, 'wall.json.tmp'), os.path.join(out_dir, 'wall.json'))
@@ -258,6 +266,18 @@ def build(runs, out_dir, url_prefix='/wall', seam_px=SEAM_PX, ramp_px=LEVEL_RAMP
             shutil.rmtree(path) if os.path.isdir(path) else os.remove(path)
     log('  wall %d x %d px, %d runs, joins nudged %s px' % (wall.width, wall.height, n, [int(f[0]) for f in fits]))
     return info
+
+
+def place_photos(runs, photos, segments, lefts):
+    """Each photo's number, file and first wall column, left to right along the wall."""
+    placed = []
+    for (strip_dir, _, _), names, seg, left in zip(runs, photos, segments, lefts):
+        for f, x0, x1 in photo_spans(strip_dir):
+            start, end = max(x0 - left, 0), min(x1 - left, seg['width'])
+            if end > start:                       # photos wholly trimmed away never show
+                number, name = names[f]
+                placed.append(dict(x=int(seg['x'] + start), number=number, file=name))
+    return placed
 
 
 def wall_overview(files_dir, width, height):

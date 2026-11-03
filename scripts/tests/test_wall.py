@@ -365,6 +365,17 @@ def test_seams_run_between_the_hearts():
     assert not reds(a, cut - 1).any() and not reds(b, cut).any()
 
 
+def test_wall_says_which_photo_shows_where(tmp_path):
+    d = tmp_path / 'run'; d.mkdir()
+    # three photos, the second one further left along the wall than its index suggests
+    np.savez(d / 'layout.npz', X0=800, X1=1800, order=np.array([1, 0, 2]),
+             seams=np.array([[175.0, 175, 175], [200.0, 200, 200]]))
+    assert render.photo_spans(str(d)) == [(1, 0.0, 600.0), (0, 600.0, 800.0), (2, 800.0, 1000.0)]
+    placed = tiles.place_photos([(str(d), 'x', None)], [[(5, 'e.jpg'), (6, 'f.jpg'), (7, 'g.jpg')]],
+                                [dict(x=100, width=650, label='x')], [50])
+    assert placed == [dict(x=100, number=6, file='f.jpg'), dict(x=650, number=5, file='e.jpg')]   # g trimmed off
+
+
 def test_runs_are_trimmed_to_straight_fully_covered_ends(tmp_path):
     img = np.full((80, 400, 3), 200, np.uint8)
     for y in range(80):                                   # ragged, slanted photo edges at both ends

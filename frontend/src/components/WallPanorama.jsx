@@ -19,6 +19,7 @@ function WallPanorama() {
   const [position, setPosition] = useState(0)
   const [view, setView] = useState({ left: 0, width: 0 })
   const [segment, setSegment] = useState('')
+  const [photo, setPhoto] = useState(null)
   const containerRef = useRef(null)
   const viewerRef = useRef(null)
   const fitHeightRef = useRef(null)
@@ -103,6 +104,8 @@ function WallPanorama() {
       const px = x * info.width
       const current = (info.segments ?? []).find((seg) => px >= seg.x && px < seg.x + seg.width)
       setSegment(current?.label ?? '')
+      // photos are listed left to right by where each starts
+      setPhoto((info.photos ?? []).findLast((p) => p.x <= px) ?? null)
     })
 
     return () => {
@@ -155,9 +158,17 @@ function WallPanorama() {
         <>
           <div className="stage">
             <div className="stage-bar stage-bar-top">
-              <p className="stage-place" aria-live="polite">
-                {segment}
-              </p>
+              <div className="stage-caption">
+                <p className="stage-place" aria-live="polite">
+                  {segment}
+                </p>
+                {photo && (
+                  <p className="stage-photo" title="The photo at the centre of the view">
+                    Photo {photo.number} of {info.photoTotal}
+                    <span className="stage-photo-file">{photo.file}</span>
+                  </p>
+                )}
+              </div>
               <div className="stage-tools" role="group" aria-label="Zoom the wall">
                 <button type="button" className="stage-button" aria-label="Zoom out" onClick={() => zoomBy(1 / ZOOM_STEP)}>
                   −

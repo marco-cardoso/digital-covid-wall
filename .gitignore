@@ -4,7 +4,6 @@
 # Python / backend
 __pycache__/
 *.py[cod]
-*.pyc
 .venv/
 venv/
 env/
@@ -12,7 +11,6 @@ env/
 .pytest_cache/
 .coverage
 htmlcov/
-backend/memorial.db
 *.db
 *.sqlite3
 
@@ -47,6 +45,10 @@ lerna-debug.log*
 *.sln
 *.sw?
 
-# Wall stitching (scripts/build_wall.py): cache and generated tiles
+# Wall stitching (scripts/build_wall.py): source photos, cache and generated tiles
+frontend/public/pictures/
 build/
 frontend/public/wall/
+
+# Claude Code worktrees
+.claude/worktrees/

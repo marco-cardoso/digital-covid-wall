@@ -1,14 +1,14 @@
 :root {
-  /* Warm stone, ink, and the hearts' red as the one accent */
-  --bg: #f6f2ec;
-  --surface: #fffcf7;
-  --surface-2: #efe8de;
-  --line: #e2d8cb;
-  --ink: #1f1c19;
-  --ink-soft: #6f675e;
-  --accent: #b5162b;
-  --accent-soft: rgba(181, 22, 43, 0.08);
-  --error: #b5162b;
+  /* Warm charcoal, pale stone ink, and the hearts' red as the one accent */
+  --bg: #141311;
+  --surface: #1d1b19;
+  --surface-2: #2a2724;
+  --line: #36322d;
+  --ink: #efe9e1;
+  --ink-soft: #a39b90;
+  --accent: #e5495c;
+  --accent-soft: rgba(229, 73, 92, 0.16);
+  --error: #ff6b7a;
 
   /* The wall's stage: matches the background baked into the tiles */
   --stage: #1a1a1a;
@@ -26,7 +26,7 @@
   line-height: 1.6;
   color: var(--ink);
   background: var(--bg);
-  color-scheme: light;
+  color-scheme: dark;
   text-rendering: optimizeLegibility;
   -webkit-font-smoothing: antialiased;
   font-feature-settings: 'cv11', 'ss01';

@@ -14,7 +14,7 @@
   position: sticky;
   top: 0;
   z-index: 10;
-  background: rgba(246, 242, 236, 0.88);
+  background: rgba(20, 19, 17, 0.88);
   backdrop-filter: blur(10px);
   border-bottom: 1px solid var(--line);
 }

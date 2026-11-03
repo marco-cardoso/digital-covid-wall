@@ -12,11 +12,11 @@ NEIGH = 3                  # each photo is matched with the next NEIGH photos
 K = np.array([[F, 0, W / 2], [0, F, H / 2], [0, 0, 1.0]])
 
 
-def list_photos(pictures_dir):
+def list_photos(pictures_dir, portrait_only=True):
     """Wall photos in shooting order: unique contents, portrait only.
 
     Byte-identical copies ("- Copy" files) are skipped, as are landscape shots, which
-    are close-ups rather than wall segments.
+    are close-ups rather than wall segments (kept with portrait_only=False).
     """
     seen, photos = set(), []
     for name in sorted(os.listdir(pictures_dir)):
@@ -28,6 +28,9 @@ def list_photos(pictures_dir):
         if digest in seen:
             continue
         seen.add(digest)
+        if not portrait_only:
+            photos.append(name)
+            continue
         img = cv2.imread(path, cv2.IMREAD_REDUCED_GRAYSCALE_8)
         if img is None or img.shape[1] > img.shape[0]:
             continue

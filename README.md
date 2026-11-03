@@ -71,6 +71,29 @@ python scripts/import_victims.py --source path/to/pictures_hearts
 
 The change reaches a database only when its `victims` table is empty.
 
+### Heart crops for reading the names
+
+`scripts/extract_hearts.py` is the pre-processing stage for reading the names with
+vision models. It finds every red heart in the photos, counts them, and writes
+model-ready crops only for the hearts with writing on them:
+
+```bash
+build/venv/bin/python scripts/extract_hearts.py            # --limit 10 to try it on a few photos
+```
+
+Output goes to `build/hearts/` (git-ignored):
+
+- `manifest.json`: hearts detected and hearts with writing, in total and per photo,
+  plus the list of crops to read (photo, box in the photo, crop paths)
+- `photos/<photo>.json`: every heart found in one photo, with its box and ink score
+- `crops/<heart>.jpg`: colour crop, 768–1024 px on the long side
+- `crops/<heart>_enh.jpg`: the same crop as dark ink on white (red channel)
+
+Each photo is cached, and redone only when the detection or crop settings change.
+Known gaps: touching hearts sometimes come out as one crop. Writing that's scratched
+in or written in silver, rather than in dark pen, isn't detected. The same heart in
+two overlapping photos is cropped twice.
+
 ## Testing
 
 Backend, against a throwaway SQLite database per test:
@@ -88,7 +111,7 @@ cd frontend
 npm run coverage
 ```
 
-Wall pipeline:
+Wall pipeline and heart crops:
 
 ```bash
 build/venv/bin/python -m pytest scripts/tests

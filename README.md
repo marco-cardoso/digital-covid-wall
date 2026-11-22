@@ -1,3 +1,5 @@
+![The National COVID Memorial Wall](docs/national-covid-memorial-wall.jpg)
+
 # The Memorial Wall
 
 A web app for remembering lives lost to COVID-19: a stitched, zoomable panorama

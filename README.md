@@ -198,3 +198,10 @@ build/venv/bin/python -m pytest scripts/tests
 | POST   | `/api/tributes/{id}/candle` | Light a candle (increments count) |
 | GET    | `/api/stats`                | Total tributes and candles        |
 | GET    | `/api/victims`              | List the names read from the wall |
+
+## Contributing
+
+Setup, tests, and what not to commit are in [CONTRIBUTING.md](CONTRIBUTING.md).
+Change one part (the backend, the frontend, or the wall scripts), run that part's
+tests, and leave the photos, tiles, and local database out of git. Names on the wall
+are real people: do not correct an OCR reading by guessing.

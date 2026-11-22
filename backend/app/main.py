@@ -1,11 +1,12 @@
 from contextlib import asynccontextmanager
-from typing import Annotated
+from typing import Annotated, Literal
 
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field, StringConstraints
 
 from .database import db, init_db
+from .insights import MESSAGES, RELATIONSHIPS, count_mentions, hearts_summary, load_hearts
 
 
 @asynccontextmanager
@@ -53,6 +54,47 @@ class WallStats(BaseModel):
     names: int
     tributes: int
     candles: int
+
+
+class HeartsStats(BaseModel):
+    # Hearts counted in the wall photos; neighbouring photos overlap, so some hearts are counted twice.
+    total: int
+    with_writing: int
+    photos: int
+
+
+class PhotoHearts(BaseModel):
+    number: int
+    date: str
+    hearts: int
+    writing: int
+
+
+class Mentions(BaseModel):
+    label: str
+    count: int
+
+
+class Insights(BaseModel):
+    hearts: HeartsStats
+    per_photo: list[PhotoHearts]
+    messages: list[Mentions]
+    relationships: list[Mentions]
+
+
+class FeedbackIn(BaseModel):
+    kind: Literal["typo", "missing", "suggestion", "other"]
+    # The name on the wall the message is about, when there is one.
+    name: Annotated[str, StringConstraints(strip_whitespace=True, max_length=200)] = ""
+    message: Annotated[TrimmedStr, StringConstraints(max_length=2000)]
+    # An email address or other way to reply; optional.
+    contact: Annotated[str, StringConstraints(strip_whitespace=True, max_length=200)] = ""
+    # A trap for bots: the form hides this field, so people leave it empty.
+    website: str = ""
+
+
+class FeedbackReceipt(BaseModel):
+    ok: bool = True
 
 
 def row_to_tribute(row) -> Tribute:
@@ -124,6 +166,19 @@ def list_victims():
     ]
 
 
+@app.post("/api/feedback", response_model=FeedbackReceipt, status_code=201)
+def send_feedback(feedback: FeedbackIn):
+    # A bot filled in the hidden field: answer as if it worked, and keep nothing.
+    if feedback.website:
+        return FeedbackReceipt()
+    with db() as conn:
+        conn.execute(
+            "INSERT INTO feedback (kind, name, message, contact) VALUES (?, ?, ?, ?)",
+            (feedback.kind, feedback.name, feedback.message, feedback.contact),
+        )
+    return FeedbackReceipt()
+
+
 @app.get("/api/stats", response_model=WallStats)
 def wall_stats():
     with db() as conn:
@@ -132,3 +187,16 @@ def wall_stats():
         ).fetchone()
         names = conn.execute("SELECT COUNT(*) AS n FROM victims").fetchone()["n"]
     return WallStats(names=names, tributes=row["tributes"], candles=row["candles"])
+
+
+@app.get("/api/insights", response_model=Insights)
+def wall_insights():
+    photos = load_hearts()
+    with db() as conn:
+        texts = [r["name"] for r in conn.execute("SELECT name FROM victims")]
+    return Insights(
+        hearts=HeartsStats(**hearts_summary(photos)),
+        per_photo=photos,
+        messages=count_mentions(texts, MESSAGES, limit=8),
+        relationships=count_mentions(texts, RELATIONSHIPS, limit=10),
+    )

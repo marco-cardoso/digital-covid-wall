@@ -50,5 +50,10 @@ frontend/public/pictures/
 build/
 frontend/public/wall/
 
+# Kaggle dataset (scripts/build_dataset.py): built, never committed. It sits under build/ already; these keep its
+# photos out even if it is built somewhere else, since no camera photo belongs in git.
+build/kaggle/
+PXL_*.jpg
+
 # Claude Code worktrees
 .claude/worktrees/

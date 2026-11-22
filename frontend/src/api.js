@@ -19,6 +19,16 @@ export function fetchWallInfo() {
   return request('/wall/wall.json')
 }
 
+// Boxes around the hearts, placed on the wall by scripts/locate_hearts.py: the index says which
+// build of the wall they were made for and which photos have them, then each photo has its own file.
+export function fetchHeartIndex() {
+  return request('/wall/hearts/index.json')
+}
+
+export function fetchHeartBoxes(file) {
+  return request(`/wall/hearts/${file}`)
+}
+
 export function fetchTributes() {
   return request('/api/tributes')
 }
@@ -27,6 +37,18 @@ export function fetchStats() {
   return request('/api/stats')
 }
 
+export function fetchInsights() {
+  return request('/api/insights')
+}
+
 export function fetchVictims() {
   return request('/api/victims')
+}
+
+export function sendFeedback(feedback) {
+  return request('/api/feedback', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(feedback),
+  })
 }

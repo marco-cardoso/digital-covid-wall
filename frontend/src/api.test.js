@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { fetchStats, fetchTributes, fetchWallInfo } from './api'
+import { fetchHeartBoxes, fetchHeartIndex, fetchInsights, fetchStats, fetchTributes, fetchWallInfo, sendFeedback } from './api'
 
 const jsonResponse = (data, status = 200) => ({
   ok: status < 400,
@@ -43,6 +43,40 @@ describe('api client', () => {
 
     await expect(fetchStats()).resolves.toEqual(stats)
     expect(fetchMock).toHaveBeenCalledWith('/api/stats', undefined)
+  })
+
+  it('fetchInsights requests the insights endpoint', async () => {
+    const insights = { hearts: { total: 5, with_writing: 2, photos: 1 }, per_photo: [], messages: [], relationships: [] }
+    const fetchMock = vi.fn().mockResolvedValue(jsonResponse(insights))
+    vi.stubGlobal('fetch', fetchMock)
+
+    await expect(fetchInsights()).resolves.toEqual(insights)
+    expect(fetchMock).toHaveBeenCalledWith('/api/insights', undefined)
+  })
+
+  it('fetchHeartIndex and fetchHeartBoxes read the heart outlines that sit beside the wall', async () => {
+    const index = { dzi: '/wall/wall.dzi', photos: [{ number: 1, file: '0001.json', x0: 0, x1: 2000 }] }
+    const boxes = { photo: 1, hearts: [[1, 2, 3, 4, 1, 5]] }
+    const fetchMock = vi.fn().mockResolvedValueOnce(jsonResponse(index)).mockResolvedValueOnce(jsonResponse(boxes))
+    vi.stubGlobal('fetch', fetchMock)
+
+    await expect(fetchHeartIndex()).resolves.toEqual(index)
+    await expect(fetchHeartBoxes('0001.json')).resolves.toEqual(boxes)
+    expect(fetchMock).toHaveBeenNthCalledWith(1, '/wall/hearts/index.json', undefined)
+    expect(fetchMock).toHaveBeenNthCalledWith(2, '/wall/hearts/0001.json', undefined)
+  })
+
+  it('sendFeedback posts the message as JSON', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(jsonResponse({ ok: true }, 201))
+    vi.stubGlobal('fetch', fetchMock)
+    const feedback = { kind: 'typo', name: 'Ada', message: 'Fix it', contact: '', website: '' }
+
+    await expect(sendFeedback(feedback)).resolves.toEqual({ ok: true })
+    expect(fetchMock).toHaveBeenCalledWith('/api/feedback', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(feedback),
+    })
   })
 
   it('throws the API detail message on error responses', async () => {

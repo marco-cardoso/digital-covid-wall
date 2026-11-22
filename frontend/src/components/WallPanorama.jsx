@@ -1,16 +1,51 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import OpenSeadragon from 'openseadragon'
-import { fetchWallInfo } from '../api'
+import { fetchHeartIndex, fetchWallInfo } from '../api'
+import HeartBoxes from './HeartBoxes'
+import HeartDialog from './HeartDialog'
+import { rangesText } from './heartBoxMath'
 
 const ZOOM_STEP = 1.5
-// The wall fills this share of the viewer's height, leaving equal bars above and below.
-const FILL = 0.82
+// The wall fills the stage's height, less a bar above and below that holds the controls
+// and the join markers. The bars are a tenth of the height, within these bounds (px).
+const PAD_RATIO = 0.1
+const MIN_PAD = 68
+const MAX_PAD = 88
 // How far past the fitted view visitors may zoom out / in.
 const MIN_ZOOM_FACTOR = 0.25
 const MAX_ZOOM_PIXEL_RATIO = 2
+const WHEEL_ZOOM_SENSITIVITY = 0.003
+const HINT_SECONDS = 9
+// The screen takes a moment to resize after going full screen or leaving it.
+const FULLSCREEN_REFIT_MS = 150
 const SLIDER_STEPS = 1000
 
 const clamp01 = (v) => Math.min(1, Math.max(0, v))
+const padFor = (height) => Math.min(MAX_PAD, Math.max(MIN_PAD, height * PAD_RATIO))
+// Wheel deltas arrive in pixels, lines or pages.
+const WHEEL_UNIT = [1, 16, 400]
+// The wall opens on this photo (by its number); without it in the list the view starts at the left end.
+const INITIAL_PHOTO = 484
+
+// Where the view is centred on opening, as a fraction of the wall's width: the middle of the
+// initial photo, which runs from where it starts to where the next one starts.
+const initialCentre = (info) => {
+  const photos = info.photos ?? []
+  const i = photos.findIndex((p) => p.number === INITIAL_PHOTO)
+  if (i < 0) return undefined
+  const end = photos[i + 1]?.x ?? info.width
+  return (photos[i].x + end) / 2 / info.width
+}
+
+// A pair of chevrons that flow in the direction of travel (the left arrow is this, mirrored by CSS).
+function ArrowIcon() {
+  return (
+    <svg className="side-arrow-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+      <path className="side-arrow-chevron" d="M4.5 6l6 6-6 6" />
+      <path className="side-arrow-chevron" d="M12 6l6 6-6 6" />
+    </svg>
+  )
+}
 
 function WallPanorama() {
   const [info, setInfo] = useState(null)
@@ -20,6 +55,16 @@ function WallPanorama() {
   const [view, setView] = useState({ left: 0, width: 0 })
   const [segment, setSegment] = useState('')
   const [photo, setPhoto] = useState(null)
+  const [hint, setHint] = useState(true)
+  const [fullscreen, setFullscreen] = useState(false)
+  const [viewer, setViewer] = useState(null)
+  const [heartIndex, setHeartIndex] = useState(null)
+  const [showHearts, setShowHearts] = useState(false)
+  const [heartCount, setHeartCount] = useState(null)
+  const [openHeart, setOpenHeart] = useState(null)
+  const stageRef = useRef(null)
+  const wasFittedRef = useRef(false)
+  const canvasRef = useRef(null)
   const containerRef = useRef(null)
   const viewerRef = useRef(null)
   const fitHeightRef = useRef(null)
@@ -41,27 +86,74 @@ function WallPanorama() {
     load()
   }, [])
 
+  // Boxes around hearts exist only for the photos that have been placed on the wall so far; without
+  // any, or made for another build of the wall (they would sit in the wrong places), there is no toggle.
+  useEffect(() => {
+    if (!info) return undefined
+    let alive = true
+    const load = async () => {
+      try {
+        const index = await fetchHeartIndex()
+        if (alive && index?.dzi === info.dzi && index.photos?.length) setHeartIndex(index)
+      } catch {
+        // no boxes made yet
+      }
+    }
+    load()
+    return () => {
+      alive = false
+    }
+  }, [info])
+
+  // The how-to-move hint fades on its own, or as soon as the visitor does something.
+  useEffect(() => {
+    if (!info) return undefined
+    const timer = setTimeout(() => setHint(false), HINT_SECONDS * 1000)
+    return () => clearTimeout(timer)
+  }, [info])
+
+  // The stage goes full screen as one piece, controls and all. If the whole wall was in view
+  // it is fitted to the new height once the screen has resized.
+  useEffect(() => {
+    let timer
+    const onChange = () => {
+      setFullscreen(document.fullscreenElement === stageRef.current)
+      clearTimeout(timer)
+      timer = setTimeout(() => {
+        const viewer = viewerRef.current
+        if (viewer && wasFittedRef.current) fitHeightRef.current(viewer.viewport.getCenter().x)
+      }, FULLSCREEN_REFIT_MS)
+    }
+    document.addEventListener('fullscreenchange', onChange)
+    return () => {
+      document.removeEventListener('fullscreenchange', onChange)
+      clearTimeout(timer)
+    }
+  }, [])
+
   useEffect(() => {
     if (!info) return undefined
     const aspect = info.height / info.width
+    const element = containerRef.current
     const viewer = OpenSeadragon({
-      element: containerRef.current,
+      element,
       tileSources: info.dzi,
       showNavigationControl: false,
       visibilityRatio: 1,
       constrainDuringPan: true,
       maxZoomPixelRatio: MAX_ZOOM_PIXEL_RATIO,
-      // The wheel scrolls the page past the wall; Ctrl/Cmd + wheel (or two fingers) zooms it.
-      cooperativeGestures: true,
-      gestureSettingsMouse: { clickToZoom: false },
+      // The wheel is handled below: it walks along the wall instead of zooming.
+      gestureSettingsMouse: { clickToZoom: false, scrollToZoom: false },
     })
     viewerRef.current = viewer
+    setViewer(viewer)
     const { viewport } = viewer
 
-    // Fit the wall to FILL of the viewer's height, centred, at a given spot along it.
+    // Fit the wall to the stage's height, centred, at a given spot along it.
     fitHeightRef.current = (centreX) => {
       const { x: w, y: h } = viewport.getContainerSize()
-      const viewHeight = aspect / FILL
+      const wallPixels = Math.max(h - 2 * padFor(h), h * 0.3)
+      const viewHeight = (aspect * h) / wallPixels
       const viewWidth = viewHeight * (w / h)
       const x = centreX === undefined ? 0 : centreX - viewWidth / 2
       viewport.fitBounds(new OpenSeadragon.Rect(x, aspect / 2 - viewHeight / 2, viewWidth, viewHeight), true)
@@ -69,28 +161,56 @@ function WallPanorama() {
     }
 
     viewer.addHandler('open', () => {
-      fitHeightRef.current()
+      fitHeightRef.current(initialCentre(info))
       // Joins sit in the bars, outside the wall: a notch above and below, and a label
       // where a stretch between visits wasn't photographed.
       const mark = (className, x, y, placement, text) => {
-        const element = document.createElement('div')
-        element.className = className
-        if (text) element.textContent = text
-        viewer.addOverlay({ element, location: new OpenSeadragon.Point(x, y), placement })
+        const marker = document.createElement('div')
+        marker.className = className
+        if (text) marker.textContent = text
+        viewer.addOverlay({ element: marker, location: new OpenSeadragon.Point(x, y), placement })
       }
       for (const brk of info.breaks ?? []) {
         const x = brk.x / info.width
         mark('wall-notch wall-notch-top', x, -aspect * 0.015, OpenSeadragon.Placement.BOTTOM)
-        mark('wall-notch wall-notch-bottom', x, aspect * 1.015, OpenSeadragon.Placement.TOP)
+        mark('wall-notch wall-notch-bottom', x, aspect * 1.01, OpenSeadragon.Placement.TOP)
         if (brk.kind === 'gap') {
-          mark('wall-gap-label', x, -aspect * 0.045, OpenSeadragon.Placement.BOTTOM, brk.label ?? 'Not photographed')
+          mark('wall-gap-label', x, -aspect * 0.03, OpenSeadragon.Placement.BOTTOM, brk.label ?? 'Not photographed')
         }
       }
     })
 
+    // Walking: the wheel (or a trackpad swipe) moves along the wall; Ctrl/⌘ + wheel, which is
+    // also how a trackpad pinch arrives, zooms about the pointer.
+    const onWheel = (event) => {
+      event.preventDefault()
+      setHint(false)
+      const unit = WHEEL_UNIT[event.deltaMode] ?? 1
+      if (event.ctrlKey || event.metaKey) {
+        const box = element.getBoundingClientRect()
+        const about = viewport.pointFromPixel(new OpenSeadragon.Point(event.clientX - box.left, event.clientY - box.top))
+        viewport.zoomBy(Math.exp(-event.deltaY * unit * WHEEL_ZOOM_SENSITIVITY), about)
+      } else {
+        const delta = Math.abs(event.deltaX) > Math.abs(event.deltaY) ? event.deltaX : event.deltaY
+        const { x: w } = viewport.getContainerSize()
+        viewport.panBy(new OpenSeadragon.Point((delta * unit * viewport.getBounds().width) / w, 0))
+      }
+      viewport.applyConstraints()
+    }
+    element.addEventListener('wheel', onWheel, { passive: false })
+    viewer.addHandler('canvas-press', () => setHint(false))
+
     viewer.addHandler('viewport-change', () => {
       const bounds = viewport.getBounds()
       const centre = viewport.getCenter()
+      // Where the wall's top and bottom edges are on screen, for the glow and hairlines.
+      const canvas = canvasRef.current
+      if (canvas) {
+        const top = viewport.pixelFromPoint(new OpenSeadragon.Point(0, 0), true).y
+        const bottom = viewport.pixelFromPoint(new OpenSeadragon.Point(0, aspect), true).y
+        canvas.style.setProperty('--wall-top', `${top}px`)
+        canvas.style.setProperty('--wall-bottom', `${bottom}px`)
+      }
       // While the whole height fits, keep the wall centred between the bars.
       const fits = bounds.height >= aspect
       viewer.panVertical = !fits
@@ -109,6 +229,8 @@ function WallPanorama() {
     })
 
     return () => {
+      element.removeEventListener('wheel', onWheel)
+      setViewer(null)
       viewer.destroy()
       viewerRef.current = null
     }
@@ -124,10 +246,28 @@ function WallPanorama() {
     fitHeightRef.current(viewerRef.current.viewport.getCenter().x)
   }
 
+  const toggleFullscreen = () => {
+    const { viewport } = viewerRef.current
+    wasFittedRef.current = viewport.getBounds().height >= info.height / info.width
+    const request = document.fullscreenElement ? document.exitFullscreen() : stageRef.current.requestFullscreen()
+    // refused (say, by a permissions policy): the wall just stays as it is
+    request.catch(() => {})
+  }
+
   const walk = (direction) => {
     const { viewport } = viewerRef.current
     const bounds = viewport.getBounds()
     viewport.panBy(new OpenSeadragon.Point(direction * bounds.width * 0.8, 0))
+    viewport.applyConstraints()
+  }
+
+  const closeHeart = useCallback(() => setOpenHeart(null), [])
+
+  // To the middle of the first photo that has boxes, for a visitor who switched them on elsewhere.
+  const goToHearts = () => {
+    const { viewport } = viewerRef.current
+    const first = heartIndex.photos[0]
+    viewport.panTo(new OpenSeadragon.Point((first.x0 + first.x1) / 2 / info.width, viewport.getCenter().y))
     viewport.applyConstraints()
   }
 
@@ -139,25 +279,60 @@ function WallPanorama() {
     viewport.applyConstraints(true)
   }
 
+  // Whether the view already reaches an end of the wall (a hair of tolerance for rounding).
+  const atStart = view.left <= 0.0005
+  const atEnd = view.left + view.width >= 0.9995
+
   return (
     <section className="wall" aria-label="Photos of the memorial wall">
-      <header className="section-intro">
-        <p className="overline">Albert Embankment, London</p>
-        <h2>Walk the wall</h2>
-        <p className="lede">
-          The National Covid Memorial Wall, stitched together from hundreds of
-          photos. Walk along it, then zoom in (+, or Ctrl/⌘ and scroll) to read
-          the messages written on the hearts.
-        </p>
-      </header>
+      <div ref={stageRef} className="stage">
+        <div ref={canvasRef} className="stage-canvas">
+          {info && <div ref={containerRef} className="wall-viewer" data-testid="wall-viewer" />}
+          {viewer && heartIndex && (
+            <HeartBoxes
+              viewer={viewer}
+              info={info}
+              index={heartIndex}
+              active={showHearts}
+              onCount={setHeartCount}
+              onOpen={setOpenHeart}
+            />
+          )}
+          {info && <div className="stage-fade stage-fade-left" aria-hidden="true" />}
+          {info && <div className="stage-fade stage-fade-right" aria-hidden="true" />}
 
-      {loading && <p className="status">Loading the wall…</p>}
-      {error && <p className="status status-error">{error}</p>}
+          {/* Big arrows at either edge, centred on the wall: tap to walk a screen's width along it. They rest
+              at the ends of the wall, where there is nowhere further to go. */}
+          {info && (
+            <>
+              <button
+                type="button"
+                className="side-arrow side-arrow-left"
+                aria-label="Look further left along the wall"
+                disabled={atStart}
+                onClick={() => walk(-1)}
+              >
+                <ArrowIcon />
+              </button>
+              <button
+                type="button"
+                className="side-arrow side-arrow-right"
+                aria-label="Look further right along the wall"
+                disabled={atEnd}
+                onClick={() => walk(1)}
+              >
+                <ArrowIcon />
+              </button>
+            </>
+          )}
 
-      {info && (
-        <>
-          <div className="stage">
-            <div className="stage-bar stage-bar-top">
+          <div className="hud hud-top">
+            <div className="hud-title">
+              <p className="overline">Albert Embankment, London</p>
+              <h2>Walk the wall</h2>
+            </div>
+
+            {info && (
               <div className="stage-caption">
                 <p className="stage-place" aria-live="polite">
                   {segment}
@@ -169,7 +344,28 @@ function WallPanorama() {
                   </p>
                 )}
               </div>
+            )}
+
+            {info && (
               <div className="stage-tools" role="group" aria-label="Zoom the wall">
+                {heartIndex && (
+                  <button
+                    type="button"
+                    className="stage-button stage-button-text heart-toggle"
+                    aria-label="Outline the hearts"
+                    aria-pressed={showHearts}
+                    title="Outline the hearts the computer found"
+                    onClick={() => {
+                      setHint(false)
+                      setShowHearts((on) => !on)
+                    }}
+                  >
+                    <svg viewBox="0 0 16 16" width="15" height="15" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinejoin="round" aria-hidden="true">
+                      <path d="M8 13.6S2.4 10.2 2.4 6.3A2.9 2.9 0 0 1 8 5a2.9 2.9 0 0 1 5.6 1.3C13.6 10.2 8 13.6 8 13.6Z" />
+                    </svg>
+                    <span className="heart-toggle-label">Hearts</span>
+                  </button>
+                )}
                 <button type="button" className="stage-button" aria-label="Zoom out" onClick={() => zoomBy(1 / ZOOM_STEP)}>
                   −
                 </button>
@@ -179,65 +375,127 @@ function WallPanorama() {
                 <button type="button" className="stage-button stage-button-text" onClick={resetZoom}>
                   Fit height
                 </button>
+                {document.fullscreenEnabled && (
+                  <button
+                    type="button"
+                    className="stage-button"
+                    aria-label={fullscreen ? 'Exit full screen' : 'Enter full screen'}
+                    aria-pressed={fullscreen}
+                    onClick={toggleFullscreen}
+                  >
+                    <svg viewBox="0 0 16 16" width="15" height="15" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                      {fullscreen ? (
+                        <path d="M6 1.5v3.5a1 1 0 0 1-1 1H1.5M10 1.5v3.5a1 1 0 0 0 1 1h3.5M6 14.5V11a1 1 0 0 0-1-1H1.5M10 14.5V11a1 1 0 0 1 1-1h3.5" />
+                      ) : (
+                        <path d="M1.5 5.5v-3a1 1 0 0 1 1-1h3M10.5 1.5h3a1 1 0 0 1 1 1v3M14.5 10.5v3a1 1 0 0 1-1 1h-3M5.5 14.5h-3a1 1 0 0 1-1-1v-3" />
+                      )}
+                    </svg>
+                  </button>
+                )}
+                <details className="legend">
+                  <summary className="stage-button" aria-label="What the markers mean">
+                    i
+                  </summary>
+                  <ul className="stage-legend">
+                    <li>
+                      <span className="legend-notch" aria-hidden="true" />
+                      Neighbouring photos joined without an overlap
+                    </li>
+                    <li>
+                      <span className="legend-notch" aria-hidden="true" />
+                      <span className="legend-label" aria-hidden="true">Not photographed</span>
+                      A stretch between visits nobody photographed
+                    </li>
+                    {heartIndex && (
+                      <>
+                        <li>
+                          <span className="legend-box legend-box-writing" aria-hidden="true" />A heart the computer found, with writing on it
+                        </li>
+                        <li>
+                          <span className="legend-box" aria-hidden="true" />A heart with no writing found
+                        </li>
+                      </>
+                    )}
+                  </ul>
+                </details>
               </div>
-            </div>
-
-            <div className="stage-canvas">
-              <div ref={containerRef} className="wall-viewer" data-testid="wall-viewer" />
-              <button
-                type="button"
-                className="stage-arrow stage-arrow-left"
-                aria-label="Walk left along the wall"
-                onClick={() => walk(-1)}
-              >
-                ‹
-              </button>
-              <button
-                type="button"
-                className="stage-arrow stage-arrow-right"
-                aria-label="Walk right along the wall"
-                onClick={() => walk(1)}
-              >
-                ›
-              </button>
-            </div>
-
-            <div className="stage-bar stage-bar-bottom">
-              <div
-                className="wall-map"
-                style={info.overview ? { backgroundImage: `url("${info.overview}")` } : undefined}
-              >
-                <div
-                  className="wall-map-window"
-                  data-testid="wall-map-window"
-                  style={{ left: `${view.left * 100}%`, width: `${view.width * 100}%` }}
-                />
-                <input
-                  type="range"
-                  className="wall-map-slider"
-                  aria-label="Position along the wall"
-                  min="0"
-                  max={SLIDER_STEPS}
-                  value={position}
-                  onChange={jumpTo}
-                />
-              </div>
-            </div>
+            )}
           </div>
 
-          <ul className="stage-legend">
-            <li>
-              <span className="legend-notch" aria-hidden="true" />
-              Neighbouring photos joined without an overlap
-            </li>
-            <li>
-              <span className="legend-notch" aria-hidden="true" />
-              <span className="legend-label" aria-hidden="true">Not photographed</span>
-              A stretch between visits nobody photographed
-            </li>
-          </ul>
-        </>
-      )}
+          {loading && <p className="status stage-status">Loading the wall…</p>}
+          {error && <p className="status status-error stage-status">{error}</p>}
+
+          {info && (
+            <p className={`stage-hint${hint ? '' : ' stage-hint-hidden'}`} aria-hidden={!hint}>
+              Scroll to walk the wall <i>·</i> Ctrl/⌘ + scroll to zoom in on the hearts <i>·</i> drag to look around
+            </p>
+          )}
+
+          {showHearts && heartCount && (heartCount.hearts > 0 || !heartCount.pending) && (
+            <p className="stage-hearts" aria-live="polite">
+              {heartCount.hearts > 0 ? (
+                <>
+                  {heartCount.hearts.toLocaleString()} {heartCount.hearts === 1 ? 'heart' : 'hearts'} outlined
+                  <span> · {heartCount.writing.toLocaleString()} with writing</span>
+                </>
+              ) : (
+                <>
+                  Only {heartIndex.photos.length === 1 ? 'photo' : 'photos'} {rangesText(heartIndex.photos.map((p) => p.number))}{' '}
+                  {heartIndex.photos.length === 1 ? 'has' : 'have'} outlines so far
+                  <button type="button" className="stage-hearts-go" onClick={goToHearts}>
+                    Go there
+                  </button>
+                </>
+              )}
+            </p>
+          )}
+
+          {info && (
+            <div className="hud hud-bottom">
+              <div className="dock">
+                <button
+                  type="button"
+                  className="dock-arrow"
+                  aria-label="Walk left along the wall"
+                  onClick={() => walk(-1)}
+                >
+                  ‹
+                </button>
+                <div
+                  className="wall-map"
+                  style={info.overview ? { backgroundImage: `url("${info.overview}")` } : undefined}
+                >
+                  <div
+                    className="wall-map-window"
+                    data-testid="wall-map-window"
+                    style={{ left: `${view.left * 100}%`, width: `${view.width * 100}%` }}
+                  />
+                  <input
+                    type="range"
+                    className="wall-map-slider"
+                    aria-label="Position along the wall"
+                    min="0"
+                    max={SLIDER_STEPS}
+                    value={position}
+                    onChange={jumpTo}
+                  />
+                </div>
+                <button
+                  type="button"
+                  className="dock-arrow"
+                  aria-label="Walk right along the wall"
+                  onClick={() => walk(1)}
+                >
+                  ›
+                </button>
+              </div>
+            </div>
+          )}
+
+          {/* A heart the visitor opened: inside the stage, so it shows in full screen too. */}
+          {openHeart && info && <HeartDialog heart={openHeart} info={info} onClose={closeHeart} />}
+        </div>
+      </div>
     </section>
   )
 }

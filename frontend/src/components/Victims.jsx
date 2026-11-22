@@ -1,7 +1,8 @@
 import { useEffect, useMemo, useState } from 'react'
 import { fetchVictims } from '../api'
+import DevNotice from './DevNotice'
 
-function Victims() {
+function Victims({ onContact }) {
   const [victims, setVictims] = useState([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
@@ -34,6 +35,8 @@ function Victims() {
         National Covid Memorial Wall.
       </p>
 
+      <DevNotice onContact={onContact} />
+
       {!loading && !error && victims.length > 0 && (
         <input
           type="search"
@@ -57,8 +60,11 @@ function Victims() {
       {filtered.length > 0 && (
         <ul className="victim-list">
           {filtered.map((victim) => (
-            <li key={victim.id} className="victim-chip">
-              {victim.name}
+            <li key={victim.id} className="victim-row">
+              <span className="victim-heart" aria-hidden="true" />
+              <span className="victim-name" title={victim.name}>
+                {victim.name}
+              </span>
             </li>
           ))}
         </ul>

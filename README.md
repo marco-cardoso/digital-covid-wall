@@ -94,6 +94,76 @@ Known gaps: touching hearts sometimes come out as one crop. Writing that's scrat
 in or written in silver, rather than in dark pen, isn't detected. The same heart in
 two overlapping photos is cropped twice.
 
+### Outlining the hearts on the wall
+
+The wall has a **Hearts** button that draws a box around every heart the detector found: gold for those
+with writing, white for the rest. Hover a box to see which heart it is; click or tap one to **open** it: a card
+with that spot of the wall in a viewer of its own (zoom, look around), and a *Clearer writing* switch that shows
+the pen dark against the paint. It is drawn from the wall's own tiles, so it works for every heart and needs no
+extra files (the detector's crops come to 4.6 GB for the whole wall, too much to serve). The boxes exist only for
+the photos that have been placed on the wall so far; the rest of the wall just has no outlines yet.
+
+```bash
+build/venv/bin/python scripts/locate_hearts.py --photos 1-2    # the first two photos
+build/venv/bin/python scripts/locate_hearts.py                 # the whole wall: about a second per photo
+```
+
+For each photo it finds the hearts (reusing `build/hearts/photos/` where the detector has already run), matches
+the photo to the stitched wall and carries each box across. The solver's camera models are not kept, so the match
+is made against the wall itself: a homography from matched features, then optical flow for the ledges and
+set-back sections that stand out from it. Against the exact geometry the first two photos were rendered with, the
+boxes land within about 1 px (median; worst 15 px) on a wall where a heart is ~130 px across. Photos overlap, so each
+heart is kept only in the photo whose stretch of the wall it sits in. A photo whose match is not one a photo
+could have (mirrored, or the wrong size for the wall's pixels) is not placed, and says so.
+
+Output goes to `frontend/public/wall/hearts/` (git-ignored, like the tiles): `index.json`, and one
+`<photo>.json` per photo of `[x, y, w, h, writing, n]` boxes in full-size wall pixels, `n` being the heart's number
+in its photo (its crop is `build/hearts/crops/<photo file>_<n>.jpg`). The site draws a photo's boxes only once
+the view comes near it, and ignores boxes made for a different build of the wall, so **run it again after the wall
+is rebuilt or switched**.
+
+Notes for doing the whole wall:
+
+- Photos 10–14, 17 and 18 are low-resolution edits in `frontend/public/pictures/`, but their hearts were found on
+  the full-size originals. Boxes are in the pixels of the photo that was searched, so the script wants that size:
+  pass `--originals <folder of the full-size photos>` and it will use those for photos whose file differs.
+- The boxes are only as good as the detector: touching hearts sometimes come out as one big box, some hearts are
+  missed, and hearts cut by a ledge give thin slivers. Outlining them makes this easy to see.
+
+### The Kaggle dataset
+
+The photos can be packaged as a dataset for Kaggle (CC BY-NC 4.0): the 520 full-size photos with the GPS position taken
+out of their EXIF (the pictures themselves are not re-encoded), `photos.csv` (order along the wall, capture time, camera),
+a thumbnail strip of the stitched wall with each photo's position, and a dataset card. It carries no heart boxes.
+
+```bash
+build/venv/bin/python scripts/build_dataset.py --originals <folder of the full-size photos> --kaggle-user <your Kaggle name>
+```
+
+It writes `build/kaggle/national-covid-memorial-wall-photos/` (about 2.9 GB, git-ignored), checks it (files, counts, sizes,
+no GPS left) and prints the `kaggle datasets create` command. Photos 10–14, 17 and 18 are low-resolution edits in
+`frontend/public/pictures/`; `--originals` points at a folder with the full-size ones, and the larger file wins.
+
+`--with-boxes` builds the other variant (`national-covid-memorial-wall-hearts`): the detector's boxes as `hearts.csv`,
+COCO and YOLO labels, a suggested split along the wall, and a card on their limits. It needs the detector's results
+(`scripts/extract_hearts.py`). The boxes are automatic and unchecked, which is why the default leaves them out.
+
+### The dashboard's numbers
+
+The dashboard leads with the total of hearts counted and charts them along the wall,
+beside what is written on them. The counts come from `backend/app/hearts.json`, which
+keeps the per-photo counts from the manifest above for the photos on the wall, numbered
+the way the wall numbers them:
+
+```bash
+python scripts/import_hearts.py      # build/hearts/manifest.json + wall.json -> backend/app/hearts.json
+```
+
+Run it again after `extract_hearts.py` or after the wall's photos change. The total is a
+guide, not a census: neighbouring photos overlap, so a heart can be counted twice, and
+some are missed. The charts of what people wrote (`/api/insights`) are counts of hearts
+whose OCR text mentions something, so they carry the OCR's mistakes too.
+
 ## Testing
 
 Backend, against a throwaway SQLite database per test:

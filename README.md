@@ -189,6 +189,62 @@ Wall pipeline and heart crops:
 build/venv/bin/python -m pytest scripts/tests
 ```
 
+The contact form's Lambda (no AWS needed):
+
+```bash
+backend/.venv/bin/python -m pytest terraform/modules/contact-api/lambda
+```
+
+## Deploying to dev
+
+Dev is https://dev.covidwall.co.uk: the built site in a private S3 bucket behind
+CloudFront, from `terraform/environments/dev` (kept on disk, not in git). There is no
+FastAPI backend there yet. The contact form is the one live API: CloudFront sends
+`POST /api/feedback` to a Lambda (`terraform/modules/contact-api`) that keeps each
+message in a DynamoDB table. The dashboard reads a snapshot of `/api/stats`,
+`/api/insights` and `/api/tributes` that `scripts/snapshot_api.py` takes from the local
+data at each deploy (tributes left out: the only ones are made-up seed examples).
+
+```bash
+scripts/deploy_dev.sh --dry-run    # what would change; uploads nothing
+scripts/deploy_dev.sh --infra      # terraform apply for dev (it asks first), then deploy
+scripts/deploy_dev.sh              # test, build, upload the app and wall tiles, clear the cache
+```
+
+It uses the shell's AWS credentials, uploads only the wall tiles that changed, and never
+uploads the source photos. It also records the deploy's known-good list for the tamper
+monitor (below).
+
+## Tamper monitoring
+
+Each site (dev and prod) is checked against a known-good list: every file the last deploy
+put in its bucket, with its SHA-256, MD5 and size (`scripts/site_manifest.py`). The list is
+kept in a private, versioned integrity bucket, and the site's bucket keeps old versions of
+every file for 90 days to restore from. Alerts go by email, and alarms also by SMS.
+
+- **At once:** every write or delete in a site's bucket is checked against the list as it
+  happens (S3 → EventBridge → `terraform/modules/site-monitor`).
+- **Every 5 minutes:** every object in the bucket, and the live site over HTTPS as visitors
+  get it (the page and everything it loads, the dashboard data, a rotating sample of the wall
+  tiles), which also catches a changed CloudFront origin, DNS or certificate. A page that
+  loads anything from another site, or carries an inline script, is flagged too.
+- **The list itself:** each rewrite is emailed (a deploy writes it twice). If you did not
+  deploy, someone else did.
+- **The monitor:** an alarm fires if the checks stop for 15 minutes or keep failing.
+- **From outside AWS:** `.github/workflows/site-integrity.yml` runs the same live check every
+  5 minutes (often later) with a read-only role, and fails, so GitHub emails you, if a site
+  differs. It still works if someone with your AWS keys switches the monitor off.
+
+Run the live check by hand:
+
+```bash
+aws s3 cp "s3://$(terraform -chdir=terraform/environments/dev output -raw integrity_bucket)/manifest.json" /tmp/manifest.json
+python3 terraform/modules/site-monitor/lambda/checker.py --manifest /tmp/manifest.json
+```
+
+Its tests: `backend/.venv/bin/python -m pytest terraform/modules/site-monitor/lambda`. Read the messages with
+`aws dynamodb scan --table-name "$(terraform -chdir=terraform/environments/dev output -raw contact_table)"`.
+
 ## API
 
 | Method | Path                        | Description                       |

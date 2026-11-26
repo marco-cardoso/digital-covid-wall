@@ -1,0 +1,52 @@
+# Checks the live sites against their known-good lists from outside AWS, so a tampered site is still caught if the
+# monitor inside AWS (terraform/modules/site-monitor) has been switched off. A failed run is the alarm: GitHub
+# emails it to whoever last changed this schedule.
+#
+# Needs three repository secrets (values from `terraform output` in terraform/environments/prod and dev):
+#   SITE_CHECK_ROLE_ARN   prod: site_check_role_arn (may only read the two lists, only from main)
+#   DEV_MANIFEST_URI      s3://<dev integrity_bucket>/manifest.json
+#   PROD_MANIFEST_URI     s3://<prod integrity_bucket>/manifest.json
+# The repository is public, so nothing here prints them; the logs show only the sites' own paths.
+
+name: Site integrity
+
+on:
+  schedule:
+    - cron: "*/5 * * * *" # the shortest GitHub allows; under load it runs late
+  workflow_dispatch:
+
+permissions:
+  id-token: write # to sign in to AWS with GitHub's OIDC token
+  contents: read
+
+concurrency:
+  group: site-integrity
+  cancel-in-progress: false
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        site: [dev, prod]
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          sparse-checkout: terraform/modules/site-monitor/lambda/checker.py
+          sparse-checkout-cone-mode: false
+
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.SITE_CHECK_ROLE_ARN }}
+          role-session-name: site-integrity-${{ matrix.site }}
+          aws-region: eu-west-1
+
+      - name: Fetch the known-good list
+        env:
+          MANIFEST_URI: ${{ matrix.site == 'dev' && secrets.DEV_MANIFEST_URI || secrets.PROD_MANIFEST_URI }}
+        run: aws s3 cp "$MANIFEST_URI" manifest.json --only-show-errors
+
+      - name: Check the live site
+        run: python3 terraform/modules/site-monitor/lambda/checker.py --manifest manifest.json

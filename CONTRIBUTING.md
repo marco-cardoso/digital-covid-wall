@@ -47,6 +47,7 @@ Run the suite for the part you changed.
 cd backend && .venv/bin/python -m pytest          # coverage must stay at 95% or above
 cd frontend && npm test && npm run lint           # Vitest, then oxlint
 build/venv/bin/python -m pytest scripts/tests
+backend/.venv/bin/python -m pytest terraform/modules/contact-api/lambda   # the contact form's Lambda
 ```
 
 `npm run coverage` is the frontend run the README uses. Backend tests each get a

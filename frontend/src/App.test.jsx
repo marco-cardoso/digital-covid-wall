@@ -6,10 +6,13 @@ import App from './App'
 
 vi.mock('./api')
 vi.mock('openseadragon', () => ({
-  default: vi.fn(() => ({
-    addHandler: vi.fn(),
-    destroy: vi.fn(),
-  })),
+  default: Object.assign(
+    vi.fn(() => ({
+      addHandler: vi.fn(),
+      destroy: vi.fn(),
+    })),
+    { Rect: class {} },
+  ),
 }))
 
 describe('App', () => {
@@ -47,10 +50,10 @@ describe('App', () => {
 
     await userEvent.click(screen.getByRole('button', { name: 'Honors' }))
 
-    expect(
-      screen.getByRole('heading', { name: 'Every name' }),
-    ).toBeInTheDocument()
-    expect(await screen.findByText('Elena Marchetti')).toBeInTheDocument()
+    // the list of names is held back for now
+    expect(screen.getByRole('heading', { name: 'Coming soon' })).toBeInTheDocument()
+    expect(screen.queryByRole('heading', { name: 'Every name' })).not.toBeInTheDocument()
+    expect(fetchVictims).not.toHaveBeenCalled()
   })
 
   it('navigates to the dashboard', async () => {
@@ -61,7 +64,7 @@ describe('App', () => {
     expect(
       screen.getByRole('heading', { name: 'Dashboard' }),
     ).toBeInTheDocument()
-    expect(await screen.findByText('Tributes')).toBeInTheDocument()
+    expect(await screen.findByText('Names read from the wall')).toBeInTheDocument()
   })
 
   it('has a contact page, and says the site is in development on every page', async () => {
@@ -76,15 +79,6 @@ describe('App', () => {
 
     await user.click(screen.getByRole('button', { name: 'The wall' }))
     await user.click(pill)
-    expect(screen.getByRole('heading', { name: 'Contact' })).toBeInTheDocument()
-  })
-
-  it('takes the visitor to the contact page from the Honors notice', async () => {
-    const user = userEvent.setup()
-    render(<App />)
-
-    await user.click(screen.getByRole('button', { name: 'Honors' }))
-    await user.click(await screen.findByRole('button', { name: /Report a typo or a missing name/ }))
     expect(screen.getByRole('heading', { name: 'Contact' })).toBeInTheDocument()
   })
 

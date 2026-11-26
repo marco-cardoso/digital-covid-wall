@@ -5,10 +5,15 @@ import react from '@vitejs/plugin-react'
 // https://vite.dev/config/
 export default defineConfig({
   plugins: [react()],
+  build: {
+    // COPY_PUBLIC_DIR=0 leaves public/ out of dist: the deploy script uploads what the site needs from it (the wall
+    // tiles) and never the 4 GB of source photos in public/pictures.
+    copyPublicDir: process.env.COPY_PUBLIC_DIR !== '0',
+  },
   server: {
     port: Number(process.env.PORT) || 5173,
     proxy: {
-      '/api': 'http://127.0.0.1:8000',
+      '/api': process.env.API_URL || 'http://127.0.0.1:8000',
     },
   },
   test: {

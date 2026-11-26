@@ -33,16 +33,15 @@ describe('Dashboard', () => {
     fetchInsights.mockResolvedValue(insights)
   })
 
-  it('renders the totals, average and most-remembered highlight', async () => {
+  it('renders the totals and most-remembered highlight', async () => {
     render(<Dashboard />)
 
     expect(await screen.findByText('Names read from the wall')).toBeInTheDocument()
     expect(screen.getAllByText((6364).toLocaleString()).length).toBeGreaterThan(0)
-    expect(screen.getByText('Tributes')).toBeInTheDocument()
-    expect(screen.getByText('3')).toBeInTheDocument()
-    expect(screen.getByText('57')).toBeInTheDocument()
-    // 57 / 3 = 19
-    expect(screen.getByText('19')).toBeInTheDocument()
+    // the tribute and candle totals are not among them
+    expect(screen.queryByText('Tributes')).not.toBeInTheDocument()
+    expect(screen.queryByText('Candles lit')).not.toBeInTheDocument()
+    expect(screen.queryByText('Candles per tribute')).not.toBeInTheDocument()
     expect(screen.getByText(/Most remembered:/)).toBeInTheDocument()
     expect(screen.getAllByText('James Okafor').length).toBeGreaterThan(0)
   })
@@ -120,13 +119,12 @@ describe('Dashboard', () => {
     expect(within(table).getByRole('rowheader', { name: 'Mum' })).toBeInTheDocument()
   })
 
-  it('shows a zero average and no highlight when there are no tributes', async () => {
+  it('shows no highlight when there are no tributes', async () => {
     fetchStats.mockResolvedValue({ names: 0, tributes: 0, candles: 0 })
     fetchTributes.mockResolvedValue([])
     render(<Dashboard />)
 
-    await screen.findByText('Tributes')
-    expect(screen.getByText('Candles per tribute')).toBeInTheDocument()
+    await screen.findByText('Names read from the wall')
     expect(screen.queryByText(/Most remembered:/)).not.toBeInTheDocument()
     expect(screen.queryByRole('heading', { name: 'Candles by tribute' })).not.toBeInTheDocument()
   })

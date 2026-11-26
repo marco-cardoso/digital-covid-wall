@@ -19,16 +19,6 @@ export function fetchWallInfo() {
   return request('/wall/wall.json')
 }
 
-// Boxes around the hearts, placed on the wall by scripts/locate_hearts.py: the index says which
-// build of the wall they were made for and which photos have them, then each photo has its own file.
-export function fetchHeartIndex() {
-  return request('/wall/hearts/index.json')
-}
-
-export function fetchHeartBoxes(file) {
-  return request(`/wall/hearts/${file}`)
-}
-
 export function fetchTributes() {
   return request('/api/tributes')
 }
@@ -45,10 +35,23 @@ export function fetchVictims() {
   return request('/api/victims')
 }
 
-export function sendFeedback(feedback) {
+// The SHA-256 of some text, in hex; null where the browser keeps it from the page (plain HTTP away from localhost).
+async function sha256Hex(text) {
+  const subtle = globalThis.crypto?.subtle
+  if (!subtle) return null
+  const digest = await subtle.digest('SHA-256', new TextEncoder().encode(text))
+  return Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, '0')).join('')
+}
+
+// Messages from the contact form. On the deployed site CloudFront hands /api/feedback to a Lambda that stores them
+// in DynamoDB (terraform/modules/contact-api), signing the request on the way; Lambda accepts a signed POST only
+// with the body's hash in x-amz-content-sha256. Locally the FastAPI backend takes them and ignores the header.
+export async function sendFeedback(feedback) {
+  const body = JSON.stringify(feedback)
+  const hash = await sha256Hex(body)
   return request('/api/feedback', {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(feedback),
+    headers: { 'Content-Type': 'application/json', ...(hash && { 'x-amz-content-sha256': hash }) },
+    body,
   })
 }

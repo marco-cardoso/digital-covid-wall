@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { fetchHeartBoxes, fetchHeartIndex, fetchInsights, fetchStats, fetchTributes, fetchWallInfo, sendFeedback } from './api'
+import { createHash } from 'node:crypto'
+import { fetchInsights, fetchStats, fetchTributes, fetchWallInfo, sendFeedback } from './api'
 
 const jsonResponse = (data, status = 200) => ({
   ok: status < 400,
@@ -54,22 +55,29 @@ describe('api client', () => {
     expect(fetchMock).toHaveBeenCalledWith('/api/insights', undefined)
   })
 
-  it('fetchHeartIndex and fetchHeartBoxes read the heart outlines that sit beside the wall', async () => {
-    const index = { dzi: '/wall/wall.dzi', photos: [{ number: 1, file: '0001.json', x0: 0, x1: 2000 }] }
-    const boxes = { photo: 1, hearts: [[1, 2, 3, 4, 1, 5]] }
-    const fetchMock = vi.fn().mockResolvedValueOnce(jsonResponse(index)).mockResolvedValueOnce(jsonResponse(boxes))
-    vi.stubGlobal('fetch', fetchMock)
-
-    await expect(fetchHeartIndex()).resolves.toEqual(index)
-    await expect(fetchHeartBoxes('0001.json')).resolves.toEqual(boxes)
-    expect(fetchMock).toHaveBeenNthCalledWith(1, '/wall/hearts/index.json', undefined)
-    expect(fetchMock).toHaveBeenNthCalledWith(2, '/wall/hearts/0001.json', undefined)
-  })
-
   it('sendFeedback posts the message as JSON', async () => {
     const fetchMock = vi.fn().mockResolvedValue(jsonResponse({ ok: true }, 201))
     vi.stubGlobal('fetch', fetchMock)
     const feedback = { kind: 'typo', name: 'Ada', message: 'Fix it', contact: '', website: '' }
+
+    await expect(sendFeedback(feedback)).resolves.toEqual({ ok: true })
+    const body = JSON.stringify(feedback)
+    expect(fetchMock).toHaveBeenCalledWith('/api/feedback', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        // the body's SHA-256, which a request CloudFront signs for the Lambda must carry
+        'x-amz-content-sha256': createHash('sha256').update(body).digest('hex'),
+      },
+      body,
+    })
+  })
+
+  it('sendFeedback still sends the message where the browser offers no hashing', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(jsonResponse({ ok: true }, 201))
+    vi.stubGlobal('fetch', fetchMock)
+    vi.stubGlobal('crypto', {})
+    const feedback = { kind: 'other', name: '', message: 'Hello', contact: '', website: '' }
 
     await expect(sendFeedback(feedback)).resolves.toEqual({ ok: true })
     expect(fetchMock).toHaveBeenCalledWith('/api/feedback', {

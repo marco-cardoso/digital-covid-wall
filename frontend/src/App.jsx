@@ -1,6 +1,5 @@
 import { useState } from 'react'
 import WallPanorama from './components/WallPanorama'
-import Victims from './components/Victims'
 import Dashboard from './components/Dashboard'
 import Contact from './components/Contact'
 import './App.css'
@@ -63,7 +62,12 @@ function App() {
 
       <main className="site-main">
         {view === 'wall' && <WallPanorama />}
-        {view === 'victims' && <Victims onContact={() => goTo('contact')} />}
+        {/* The list of names (components/Victims.jsx) is held back until it is ready. */}
+        {view === 'victims' && (
+          <section className="victims coming-soon" aria-label="Honors">
+            <h2>Coming soon</h2>
+          </section>
+        )}
         {view === 'dashboard' && <Dashboard />}
         {view === 'contact' && <Contact />}
       </main>

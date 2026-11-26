@@ -1,7 +1,7 @@
 import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { fetchHeartIndex, fetchWallInfo } from '../api'
+import { fetchWallInfo } from '../api'
 import WallPanorama from './WallPanorama'
 
 // OpenSeadragon draws to a canvas, which jsdom lacks; stand in a recording fake.
@@ -51,22 +51,6 @@ const osd = vi.hoisted(() => {
   return { state, OpenSeadragon }
 })
 
-// The outlines are drawn on a canvas by their own component (tested apart); here it is a stand-in that
-// notes what it was given and lets a test play the part of its count.
-const heartBoxes = vi.hoisted(() => ({ props: null }))
-vi.mock('./HeartBoxes', () => ({
-  default: (props) => {
-    heartBoxes.props = props
-    return null
-  },
-}))
-const heartDialog = vi.hoisted(() => ({ props: null }))
-vi.mock('./HeartDialog', () => ({
-  default: (props) => {
-    heartDialog.props = props
-    return <div role="dialog" aria-label="An opened heart" />
-  },
-}))
 vi.mock('openseadragon', () => ({ default: osd.OpenSeadragon }))
 vi.mock('../api')
 
@@ -86,6 +70,12 @@ const info = {
   ],
 }
 
+// The top 320 px and bottom 144 px of the 2000 px wall are masked off: what shows runs from 0.0016 to 0.00928.
+const TOP = 0.0016
+const BOTTOM = 0.00928
+const SHOWN = BOTTOM - TOP
+const MIDDLE = (TOP + BOTTOM) / 2
+
 const renderWall = async () => {
   const view = render(<WallPanorama />)
   await waitFor(() => expect(osd.state.viewer).not.toBeNull())
@@ -99,10 +89,7 @@ describe('WallPanorama', () => {
     osd.state.handlers = {}
     osd.state.viewer = null
     osd.state.options = null
-    heartBoxes.props = null
-    heartDialog.props = null
     fetchWallInfo.mockResolvedValue(info)
-    fetchHeartIndex.mockRejectedValue(Object.assign(new Error('Request failed (404)'), { status: 404 }))
   })
 
   it('shows a loading message, then a deep-zoom viewer of the stitched wall', async () => {
@@ -114,7 +101,8 @@ describe('WallPanorama', () => {
     const { element, ...options } = osd.state.options
     expect(element).toBe(screen.getByTestId('wall-viewer'))   // identity: deep-comparing DOM nodes is slow
     expect(options).toMatchObject({
-      tileSources: '/wall/wall.dzi',
+      // clipped to hide the ragged strips along the top and bottom, where photos left gaps
+      tileSources: { tileSource: '/wall/wall.dzi', clip: { x: 0, y: 320, width: 200000, height: 1536 } },
       showNavigationControl: false,
       gestureSettingsMouse: { clickToZoom: false, scrollToZoom: false },
     })
@@ -125,13 +113,12 @@ describe('WallPanorama', () => {
     openViewer()
 
     const { viewport } = osd.state.viewer
-    // aspect = 2000 / 200000 = 0.01; an 800x400 viewer keeps a 68px bar top and bottom,
-    // so the wall gets the 264px between them.
+    // an 800x400 viewer keeps a 68px bar top and bottom, so the shown wall gets the 264px between them
     const [rect, immediately] = viewport.fitBounds.mock.calls.at(-1)
     expect(immediately).toBe(true)
     expect(rect.x).toBe(0)
-    expect(rect.height).toBeCloseTo((0.01 * 400) / 264)
-    expect(rect.y + rect.height / 2).toBeCloseTo(0.005)        // centred on the wall
+    expect(rect.height).toBeCloseTo((SHOWN * 400) / 264, 8)
+    expect(rect.y + rect.height / 2).toBeCloseTo(MIDDLE, 8)    // centred on the shown wall
     expect(rect.width).toBeCloseTo(rect.height * 2)
     expect(viewport.minZoomLevel).toBe(10) // a quarter of the fitted zoom
   })
@@ -153,7 +140,7 @@ describe('WallPanorama', () => {
     const [rect, immediately] = osd.state.viewer.viewport.fitBounds.mock.calls.at(-1)
     expect(immediately).toBe(true)
     expect(rect.x + rect.width / 2).toBeCloseTo(162000 / 200000)     // the middle of photo 484
-    expect(rect.height).toBeCloseTo((0.01 * 400) / 264)                // still fitted to the stage height
+    expect(rect.height).toBeCloseTo((SHOWN * 400) / 264, 8)            // still fitted to the stage height
   })
 
   it('marks every join in the bars, and labels the stretches nobody photographed', async () => {
@@ -166,10 +153,12 @@ describe('WallPanorama', () => {
       'wall-notch wall-notch-top', 'wall-notch wall-notch-bottom', 'wall-gap-label',
       'wall-notch wall-notch-top', 'wall-notch wall-notch-bottom', 'wall-gap-label',
     ])
-    // notches sit just outside the wall (aspect 0.01): above its top, below its bottom
+    // notches sit just outside the shown wall: above its (masked) top, below its bottom
     expect(overlays[0].location.x).toBeCloseTo(0.15)
-    expect(overlays[0].location.y).toBeLessThan(0)
-    expect(overlays[1].location.y).toBeGreaterThan(0.01)
+    expect(overlays[0].location.y).toBeLessThan(TOP)
+    expect(overlays[0].location.y).toBeGreaterThan(TOP - 0.001)
+    expect(overlays[1].location.y).toBeGreaterThan(BOTTOM)
+    expect(overlays[1].location.y).toBeLessThan(BOTTOM + 0.001)
     expect(overlays.filter((o) => o.element.className === 'wall-gap-label').map((o) => o.element.textContent))
       .toEqual(['Not photographed', 'Not photographed'])
   })
@@ -197,7 +186,7 @@ describe('WallPanorama', () => {
     // fits the height again around the current spot along the wall
     const [rect] = viewport.fitBounds.mock.calls.at(-1)
     expect(rect.x + rect.width / 2).toBeCloseTo(0.25)
-    expect(rect.height).toBeCloseTo((0.01 * 400) / 264)
+    expect(rect.height).toBeCloseTo((SHOWN * 400) / 264, 8)
   })
 
   it('keeps the bars to a tenth of a tall viewer, within limits', async () => {
@@ -209,9 +198,9 @@ describe('WallPanorama', () => {
       return viewport.fitBounds.mock.calls.at(-1)[0].height
     }
 
-    expect(fitAt(1000)).toBeCloseTo((0.01 * 1000) / 800)    // a tenth of 1000px
-    expect(fitAt(2000)).toBeCloseTo((0.01 * 2000) / 1824)   // capped at 88px
-    expect(fitAt(100)).toBeCloseTo((0.01 * 100) / 30)       // never less than 30% for the wall
+    expect(fitAt(750)).toBeCloseTo((SHOWN * 750) / 600, 8)      // a tenth of 750px
+    expect(fitAt(2000)).toBeCloseTo((SHOWN * 2000) / 1824, 8)   // capped at 88px
+    expect(fitAt(100)).toBeCloseTo((SHOWN * 100) / 30, 8)       // never less than 30% for the wall
   })
 
   it('walks along the wall by most of a screen width', async () => {
@@ -282,6 +271,9 @@ describe('WallPanorama', () => {
     expect(windowEl.style.left).toBe('20%')
     expect(parseFloat(windowEl.style.width)).toBeCloseTo(5)
     expect(container.querySelector('.wall-map').style.backgroundImage).toBe('url("/wall/wall-overview.jpg")')
+    // stretched (2000 / 1536) and shifted (320 of the 464 masked px are at the top) so the masked strips fall outside the map
+    expect(container.querySelector('.wall-map').style.backgroundSize).toBe('100% 130.21%')
+    expect(container.querySelector('.wall-map').style.backgroundPosition).toMatch(/^0(px)? 68\.97%$/)
 
     viewport.getCenter.mockReturnValue({ x: 1.3, y: 0.01 })
     act(() => osd.state.handlers['viewport-change']())
@@ -347,7 +339,10 @@ describe('WallPanorama', () => {
     // drifted off-centre while fully in view: pulled back, vertical panning locked
     viewport.getCenter.mockReturnValue({ x: 0.3, y: 0.0062 })
     act(() => osd.state.handlers['viewport-change']())
-    expect(viewport.panTo).toHaveBeenLastCalledWith(expect.objectContaining({ x: 0.3, y: 0.005 }), true)
+    const [centre, immediately] = viewport.panTo.mock.calls.at(-1)
+    expect(centre.x).toBe(0.3)
+    expect(centre.y).toBeCloseTo(MIDDLE, 8)
+    expect(immediately).toBe(true)
     expect(viewer.panVertical).toBe(false)
 
     // zoomed in past the wall's height: free to pan up and down
@@ -444,10 +439,10 @@ describe('WallPanorama', () => {
     const { container } = await renderWall()
     act(() => osd.state.handlers['viewport-change']())
 
-    // aspect 0.01: the fake maps y to 100 + y * 10000 pixels
+    // the fake maps y to 100 + y * 10000 pixels; the edges are where the masks start (y = 0.0016 and 0.00928)
     const canvas = container.querySelector('.stage-canvas')
-    expect(canvas.style.getPropertyValue('--wall-top')).toBe('100px')
-    expect(canvas.style.getPropertyValue('--wall-bottom')).toBe('200px')
+    expect(parseFloat(canvas.style.getPropertyValue('--wall-top'))).toBeCloseTo(116)
+    expect(parseFloat(canvas.style.getPropertyValue('--wall-bottom'))).toBeCloseTo(192.8)
   })
 
   describe('full screen', () => {
@@ -557,144 +552,6 @@ describe('WallPanorama', () => {
       document.dispatchEvent(new Event('fullscreenchange'))
       vi.advanceTimersByTime(500)
       expect(viewport.fitBounds).not.toHaveBeenCalled()
-    })
-  })
-
-  describe('outlining the hearts', () => {
-    const heartIndex = {
-      dzi: info.dzi,
-      photos: [
-        { number: 1, file: '0001.json', x0: 0, x1: 2000 },
-        { number: 2, file: '0002.json', x0: 2000, x1: 4000 },
-      ],
-    }
-    const toggle = () => screen.findByRole('button', { name: 'Outline the hearts' })
-    const count = (hearts, writing = 0, pending = false) => act(() => heartBoxes.props.onCount({ hearts, writing, pending }))
-
-    it('offers no toggle until some photos have outlines', async () => {
-      await renderWall()
-
-      expect(screen.queryByRole('button', { name: /Outline the hearts/ })).not.toBeInTheDocument()
-      expect(screen.queryByText(/A heart the computer found/)).not.toBeInTheDocument()
-      expect(heartBoxes.props).toBeNull()
-    })
-
-    it('offers none for outlines made for another build of the wall, or for no photos', async () => {
-      fetchHeartIndex.mockResolvedValue({ ...heartIndex, dzi: '/wall/older.dzi' })
-      const { unmount } = await renderWall()
-      await waitFor(() => expect(fetchHeartIndex).toHaveBeenCalled())
-      expect(screen.queryByRole('button', { name: /Outline the hearts/ })).not.toBeInTheDocument()
-      unmount()
-
-      fetchHeartIndex.mockResolvedValue({ dzi: info.dzi, photos: [] })
-      await renderWall()
-      await waitFor(() => expect(fetchHeartIndex).toHaveBeenCalledTimes(2))
-      expect(screen.queryByRole('button', { name: /Outline the hearts/ })).not.toBeInTheDocument()
-    })
-
-    it('adds a toggle that switches the outlines on and off, and explains them in the legend', async () => {
-      fetchHeartIndex.mockResolvedValue(heartIndex)
-      await renderWall()
-
-      const button = await toggle()
-      expect(button).toHaveAttribute('aria-pressed', 'false')
-      expect(button).toHaveTextContent('Hearts') // the words go on a narrow screen, the name stays
-      expect(heartBoxes.props).toMatchObject({ info, index: heartIndex, active: false, viewer: osd.state.viewer })
-      expect(screen.getByText(/A heart the computer found, with writing on it/)).toBeInTheDocument()
-      expect(screen.getByText(/A heart with no writing found/)).toBeInTheDocument()
-
-      await userEvent.click(button)
-      expect(button).toHaveAttribute('aria-pressed', 'true')
-      expect(heartBoxes.props.active).toBe(true)
-
-      await userEvent.click(button)
-      expect(button).toHaveAttribute('aria-pressed', 'false')
-      expect(heartBoxes.props.active).toBe(false)
-    })
-
-    it('puts the how-to-move hint away once the visitor reaches for the outlines', async () => {
-      fetchHeartIndex.mockResolvedValue(heartIndex)
-      await renderWall()
-      const hint = screen.getByText(/Scroll to walk the wall/)
-      expect(hint).not.toHaveClass('stage-hint-hidden')
-
-      await userEvent.click(await toggle())
-      expect(hint).toHaveClass('stage-hint-hidden')
-    })
-
-    it('says how many hearts are outlined in view, and how many have writing', async () => {
-      fetchHeartIndex.mockResolvedValue(heartIndex)
-      await renderWall()
-      await userEvent.click(await toggle())
-
-      count(1234, 456)
-      expect(await screen.findByText(`${(1234).toLocaleString()} hearts outlined`, { exact: false })).toBeInTheDocument()
-      expect(screen.getByText(`· ${(456).toLocaleString()} with writing`, { exact: false })).toBeInTheDocument()
-
-      count(1, 1)
-      expect(screen.getByText('1 heart outlined', { exact: false })).toBeInTheDocument()
-    })
-
-    it('says nothing about hearts while the outlines are off, or while the photos are still being fetched', async () => {
-      fetchHeartIndex.mockResolvedValue(heartIndex)
-      await renderWall()
-      await toggle()
-      count(5, 2)
-      expect(screen.queryByText(/outlined/)).not.toBeInTheDocument() // off
-
-      await userEvent.click(await toggle())
-      count(0, 0, true)
-      expect(screen.queryByText(/outlines so far/)).not.toBeInTheDocument() // the boxes are on their way
-    })
-
-    it('says where the outlines are when there are none in view, and takes the visitor there', async () => {
-      fetchHeartIndex.mockResolvedValue(heartIndex)
-      await renderWall()
-      await userEvent.click(await toggle())
-      count(0)
-
-      expect(screen.getByText(/Only photos 1–2 have outlines so far/)).toBeInTheDocument()
-      await userEvent.click(screen.getByRole('button', { name: 'Go there' }))
-      const { viewport } = osd.state.viewer
-      const [point] = viewport.panTo.mock.calls.at(-1)
-      expect(point.x).toBeCloseTo(1000 / 200000) // the middle of the first photo's stretch (0..2000)
-      expect(point.y).toBe(0.01) // at the height the visitor was looking
-      expect(viewport.applyConstraints).toHaveBeenCalled()
-    })
-
-    it('speaks of a single photo in the singular', async () => {
-      fetchHeartIndex.mockResolvedValue({ dzi: info.dzi, photos: [heartIndex.photos[1]] })
-      await renderWall()
-      await userEvent.click(await toggle())
-      count(0)
-
-      expect(screen.getByText(/Only photo 2 has outlines so far/)).toBeInTheDocument()
-    })
-
-    it('opens a heart the visitor picks, in a card over the wall, and closes it again', async () => {
-      fetchHeartIndex.mockResolvedValue(heartIndex)
-      await renderWall()
-      await userEvent.click(await toggle())
-      expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
-
-      const heart = { photo: 1, number: 43, writing: true, box: { x: 100, y: 200, w: 50, h: 60 } }
-      act(() => heartBoxes.props.onOpen(heart))
-      expect(screen.getByRole('dialog', { name: 'An opened heart' })).toBeInTheDocument()
-      expect(heartDialog.props).toMatchObject({ heart, info })
-
-      act(() => heartDialog.props.onClose())
-      expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
-    })
-
-    it('stops looking for outlines when it goes away before they arrive', async () => {
-      let arrive
-      fetchHeartIndex.mockReturnValue(new Promise((resolve) => (arrive = resolve)))
-      const { unmount } = await renderWall()
-      unmount()
-      arrive(heartIndex)
-
-      await act(async () => {})
-      expect(heartBoxes.props).toBeNull()
     })
   })
 

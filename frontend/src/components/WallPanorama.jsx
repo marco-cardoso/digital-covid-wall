@@ -1,9 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import OpenSeadragon from 'openseadragon'
-import { fetchHeartIndex, fetchWallInfo } from '../api'
-import HeartBoxes from './HeartBoxes'
-import HeartDialog from './HeartDialog'
-import { rangesText } from './heartBoxMath'
+import { fetchWallInfo } from '../api'
 
 const ZOOM_STEP = 1.5
 // The wall fills the stage's height, less a bar above and below that holds the controls
@@ -26,6 +23,23 @@ const padFor = (height) => Math.min(MAX_PAD, Math.max(MIN_PAD, height * PAD_RATI
 const WHEEL_UNIT = [1, 16, 400]
 // The wall opens on this photo (by its number); without it in the list the view starts at the left end.
 const INITIAL_PHOTO = 484
+// The stitched photos do not all reach the top and bottom of the wall: their ragged edges leave gaps in the
+// background colour, up to ~305 px deep at the top and ~132 px at the bottom in the current build (of 3,508).
+// A strip this many image pixels deep is hidden along the whole wall at each edge, so both edges are straight
+// lines; everything else (fitting, the bars, the join marks, the overview) treats those
+// lines as the wall's edges. Measured for this build of the tiles.
+const TOP_MASK = 320
+const BOTTOM_MASK = 144
+
+// The shown part of the wall: its masked strips in image pixels, and where it runs top to bottom in
+// viewport units (the wall is 1 wide).
+const wallSpan = (info) => {
+  const topPixels = Math.min(TOP_MASK, info.height / 4)
+  const bottomPixels = Math.min(BOTTOM_MASK, info.height / 4)
+  const top = topPixels / info.width
+  const bottom = (info.height - bottomPixels) / info.width
+  return { topPixels, bottomPixels, top, bottom, height: bottom - top, middle: (top + bottom) / 2 }
+}
 
 // Where the view is centred on opening, as a fraction of the wall's width: the middle of the
 // initial photo, which runs from where it starts to where the next one starts.
@@ -57,11 +71,6 @@ function WallPanorama() {
   const [photo, setPhoto] = useState(null)
   const [hint, setHint] = useState(true)
   const [fullscreen, setFullscreen] = useState(false)
-  const [viewer, setViewer] = useState(null)
-  const [heartIndex, setHeartIndex] = useState(null)
-  const [showHearts, setShowHearts] = useState(false)
-  const [heartCount, setHeartCount] = useState(null)
-  const [openHeart, setOpenHeart] = useState(null)
   const stageRef = useRef(null)
   const wasFittedRef = useRef(false)
   const canvasRef = useRef(null)
@@ -85,25 +94,6 @@ function WallPanorama() {
     }
     load()
   }, [])
-
-  // Boxes around hearts exist only for the photos that have been placed on the wall so far; without
-  // any, or made for another build of the wall (they would sit in the wrong places), there is no toggle.
-  useEffect(() => {
-    if (!info) return undefined
-    let alive = true
-    const load = async () => {
-      try {
-        const index = await fetchHeartIndex()
-        if (alive && index?.dzi === info.dzi && index.photos?.length) setHeartIndex(index)
-      } catch {
-        // no boxes made yet
-      }
-    }
-    load()
-    return () => {
-      alive = false
-    }
-  }, [info])
 
   // The how-to-move hint fades on its own, or as soon as the visitor does something.
   useEffect(() => {
@@ -134,10 +124,15 @@ function WallPanorama() {
   useEffect(() => {
     if (!info) return undefined
     const aspect = info.height / info.width
+    const span = wallSpan(info)
     const element = containerRef.current
     const viewer = OpenSeadragon({
       element,
-      tileSources: info.dzi,
+      // The clip hides the masked strips; panning and zoom limits keep to what is left.
+      tileSources: {
+        tileSource: info.dzi,
+        clip: new OpenSeadragon.Rect(0, span.topPixels, info.width, info.height - span.topPixels - span.bottomPixels),
+      },
       showNavigationControl: false,
       visibilityRatio: 1,
       constrainDuringPan: true,
@@ -146,17 +141,16 @@ function WallPanorama() {
       gestureSettingsMouse: { clickToZoom: false, scrollToZoom: false },
     })
     viewerRef.current = viewer
-    setViewer(viewer)
     const { viewport } = viewer
 
     // Fit the wall to the stage's height, centred, at a given spot along it.
     fitHeightRef.current = (centreX) => {
       const { x: w, y: h } = viewport.getContainerSize()
       const wallPixels = Math.max(h - 2 * padFor(h), h * 0.3)
-      const viewHeight = (aspect * h) / wallPixels
+      const viewHeight = (span.height * h) / wallPixels
       const viewWidth = viewHeight * (w / h)
       const x = centreX === undefined ? 0 : centreX - viewWidth / 2
-      viewport.fitBounds(new OpenSeadragon.Rect(x, aspect / 2 - viewHeight / 2, viewWidth, viewHeight), true)
+      viewport.fitBounds(new OpenSeadragon.Rect(x, span.middle - viewHeight / 2, viewWidth, viewHeight), true)
       viewport.minZoomLevel = viewport.getZoom() * MIN_ZOOM_FACTOR
     }
 
@@ -172,10 +166,10 @@ function WallPanorama() {
       }
       for (const brk of info.breaks ?? []) {
         const x = brk.x / info.width
-        mark('wall-notch wall-notch-top', x, -aspect * 0.015, OpenSeadragon.Placement.BOTTOM)
-        mark('wall-notch wall-notch-bottom', x, aspect * 1.01, OpenSeadragon.Placement.TOP)
+        mark('wall-notch wall-notch-top', x, span.top - aspect * 0.015, OpenSeadragon.Placement.BOTTOM)
+        mark('wall-notch wall-notch-bottom', x, span.bottom + aspect * 0.01, OpenSeadragon.Placement.TOP)
         if (brk.kind === 'gap') {
-          mark('wall-gap-label', x, -aspect * 0.03, OpenSeadragon.Placement.BOTTOM, brk.label ?? 'Not photographed')
+          mark('wall-gap-label', x, span.top - aspect * 0.03, OpenSeadragon.Placement.BOTTOM, brk.label ?? 'Not photographed')
         }
       }
     })
@@ -206,16 +200,16 @@ function WallPanorama() {
       // Where the wall's top and bottom edges are on screen, for the glow and hairlines.
       const canvas = canvasRef.current
       if (canvas) {
-        const top = viewport.pixelFromPoint(new OpenSeadragon.Point(0, 0), true).y
-        const bottom = viewport.pixelFromPoint(new OpenSeadragon.Point(0, aspect), true).y
+        const top = viewport.pixelFromPoint(new OpenSeadragon.Point(0, span.top), true).y
+        const bottom = viewport.pixelFromPoint(new OpenSeadragon.Point(0, span.bottom), true).y
         canvas.style.setProperty('--wall-top', `${top}px`)
         canvas.style.setProperty('--wall-bottom', `${bottom}px`)
       }
       // While the whole height fits, keep the wall centred between the bars.
-      const fits = bounds.height >= aspect
+      const fits = bounds.height >= span.height
       viewer.panVertical = !fits
-      if (fits && Math.abs(centre.y - aspect / 2) > aspect * 1e-3) {
-        viewport.panTo(new OpenSeadragon.Point(centre.x, aspect / 2), true)
+      if (fits && Math.abs(centre.y - span.middle) > aspect * 1e-3) {
+        viewport.panTo(new OpenSeadragon.Point(centre.x, span.middle), true)
       }
       const x = clamp01(centre.x)
       setPosition(Math.round(x * SLIDER_STEPS))
@@ -230,7 +224,6 @@ function WallPanorama() {
 
     return () => {
       element.removeEventListener('wheel', onWheel)
-      setViewer(null)
       viewer.destroy()
       viewerRef.current = null
     }
@@ -248,7 +241,7 @@ function WallPanorama() {
 
   const toggleFullscreen = () => {
     const { viewport } = viewerRef.current
-    wasFittedRef.current = viewport.getBounds().height >= info.height / info.width
+    wasFittedRef.current = viewport.getBounds().height >= wallSpan(info).height
     const request = document.fullscreenElement ? document.exitFullscreen() : stageRef.current.requestFullscreen()
     // refused (say, by a permissions policy): the wall just stays as it is
     request.catch(() => {})
@@ -258,16 +251,6 @@ function WallPanorama() {
     const { viewport } = viewerRef.current
     const bounds = viewport.getBounds()
     viewport.panBy(new OpenSeadragon.Point(direction * bounds.width * 0.8, 0))
-    viewport.applyConstraints()
-  }
-
-  const closeHeart = useCallback(() => setOpenHeart(null), [])
-
-  // To the middle of the first photo that has boxes, for a visitor who switched them on elsewhere.
-  const goToHearts = () => {
-    const { viewport } = viewerRef.current
-    const first = heartIndex.photos[0]
-    viewport.panTo(new OpenSeadragon.Point((first.x0 + first.x1) / 2 / info.width, viewport.getCenter().y))
     viewport.applyConstraints()
   }
 
@@ -282,22 +265,13 @@ function WallPanorama() {
   // Whether the view already reaches an end of the wall (a hair of tolerance for rounding).
   const atStart = view.left <= 0.0005
   const atEnd = view.left + view.width >= 0.9995
+  const shown = info ? wallSpan(info) : null
 
   return (
     <section className="wall" aria-label="Photos of the memorial wall">
       <div ref={stageRef} className="stage">
         <div ref={canvasRef} className="stage-canvas">
           {info && <div ref={containerRef} className="wall-viewer" data-testid="wall-viewer" />}
-          {viewer && heartIndex && (
-            <HeartBoxes
-              viewer={viewer}
-              info={info}
-              index={heartIndex}
-              active={showHearts}
-              onCount={setHeartCount}
-              onOpen={setOpenHeart}
-            />
-          )}
           {info && <div className="stage-fade stage-fade-left" aria-hidden="true" />}
           {info && <div className="stage-fade stage-fade-right" aria-hidden="true" />}
 
@@ -348,24 +322,6 @@ function WallPanorama() {
 
             {info && (
               <div className="stage-tools" role="group" aria-label="Zoom the wall">
-                {heartIndex && (
-                  <button
-                    type="button"
-                    className="stage-button stage-button-text heart-toggle"
-                    aria-label="Outline the hearts"
-                    aria-pressed={showHearts}
-                    title="Outline the hearts the computer found"
-                    onClick={() => {
-                      setHint(false)
-                      setShowHearts((on) => !on)
-                    }}
-                  >
-                    <svg viewBox="0 0 16 16" width="15" height="15" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinejoin="round" aria-hidden="true">
-                      <path d="M8 13.6S2.4 10.2 2.4 6.3A2.9 2.9 0 0 1 8 5a2.9 2.9 0 0 1 5.6 1.3C13.6 10.2 8 13.6 8 13.6Z" />
-                    </svg>
-                    <span className="heart-toggle-label">Hearts</span>
-                  </button>
-                )}
                 <button type="button" className="stage-button" aria-label="Zoom out" onClick={() => zoomBy(1 / ZOOM_STEP)}>
                   −
                 </button>
@@ -406,16 +362,6 @@ function WallPanorama() {
                       <span className="legend-label" aria-hidden="true">Not photographed</span>
                       A stretch between visits nobody photographed
                     </li>
-                    {heartIndex && (
-                      <>
-                        <li>
-                          <span className="legend-box legend-box-writing" aria-hidden="true" />A heart the computer found, with writing on it
-                        </li>
-                        <li>
-                          <span className="legend-box" aria-hidden="true" />A heart with no writing found
-                        </li>
-                      </>
-                    )}
                   </ul>
                 </details>
               </div>
@@ -428,25 +374,6 @@ function WallPanorama() {
           {info && (
             <p className={`stage-hint${hint ? '' : ' stage-hint-hidden'}`} aria-hidden={!hint}>
               Scroll to walk the wall <i>·</i> Ctrl/⌘ + scroll to zoom in on the hearts <i>·</i> drag to look around
-            </p>
-          )}
-
-          {showHearts && heartCount && (heartCount.hearts > 0 || !heartCount.pending) && (
-            <p className="stage-hearts" aria-live="polite">
-              {heartCount.hearts > 0 ? (
-                <>
-                  {heartCount.hearts.toLocaleString()} {heartCount.hearts === 1 ? 'heart' : 'hearts'} outlined
-                  <span> · {heartCount.writing.toLocaleString()} with writing</span>
-                </>
-              ) : (
-                <>
-                  Only {heartIndex.photos.length === 1 ? 'photo' : 'photos'} {rangesText(heartIndex.photos.map((p) => p.number))}{' '}
-                  {heartIndex.photos.length === 1 ? 'has' : 'have'} outlines so far
-                  <button type="button" className="stage-hearts-go" onClick={goToHearts}>
-                    Go there
-                  </button>
-                </>
-              )}
             </p>
           )}
 
@@ -463,7 +390,16 @@ function WallPanorama() {
                 </button>
                 <div
                   className="wall-map"
-                  style={info.overview ? { backgroundImage: `url("${info.overview}")` } : undefined}
+                  style={
+                    info.overview
+                      ? {
+                          backgroundImage: `url("${info.overview}")`,
+                          // stretched and shifted so the masked strips fall outside the map
+                          backgroundSize: `100% ${((100 * info.height) / (info.height - shown.topPixels - shown.bottomPixels)).toFixed(2)}%`,
+                          backgroundPosition: `0 ${((100 * shown.topPixels) / (shown.topPixels + shown.bottomPixels || 1)).toFixed(2)}%`,
+                        }
+                      : undefined
+                  }
                 >
                   <div
                     className="wall-map-window"
@@ -491,9 +427,6 @@ function WallPanorama() {
               </div>
             </div>
           )}
-
-          {/* A heart the visitor opened: inside the stage, so it shows in full screen too. */}
-          {openHeart && info && <HeartDialog heart={openHeart} info={info} onClose={closeHeart} />}
         </div>
       </div>
     </section>

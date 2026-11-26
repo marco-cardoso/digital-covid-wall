@@ -47,10 +47,6 @@ function Dashboard() {
     (best, t) => (t.candles > (best?.candles ?? -1) ? t : best),
     null,
   )
-  const averageCandles =
-    stats && stats.tributes > 0
-      ? Math.round((stats.candles / stats.tributes) * 10) / 10
-      : 0
 
   const hearts = insights?.hearts?.total > 0 ? insights.hearts : null
   const names = stats?.names ?? 0
@@ -119,18 +115,6 @@ function Dashboard() {
             <div className="stat-card">
               <span className="stat-value">{stats.names.toLocaleString()}</span>
               <span className="stat-label">Names read from the wall</span>
-            </div>
-            <div className="stat-card">
-              <span className="stat-value">{stats.tributes}</span>
-              <span className="stat-label">Tributes</span>
-            </div>
-            <div className="stat-card">
-              <span className="stat-value">{stats.candles}</span>
-              <span className="stat-label">Candles lit</span>
-            </div>
-            <div className="stat-card">
-              <span className="stat-value">{averageCandles}</span>
-              <span className="stat-label">Candles per tribute</span>
             </div>
           </div>
 
